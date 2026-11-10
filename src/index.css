@@ -1,0 +1,78 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-brand: #1db954;
+  --color-brand-hover: #1ed760;
+  --color-bg: #121212;
+  --color-surface: #181818;
+  --color-elevated: #242424;
+  --color-highlight: #2a2a2a;
+  --color-muted: #b3b3b3;
+  --color-subtle: #727272;
+
+  --color-tram: #e11d48;
+  --color-metro-a: #16a34a;
+  --color-metro-b: #eab308;
+  --color-metro-c: #dc2626;
+  --color-bus: #0ea5e9;
+  --color-train: #6366f1;
+
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-bg text-white antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: contain;
+}
+
+.pt-safe {
+  padding-top: max(env(safe-area-inset-top), 0.75rem);
+}
+.pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes slide-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-slide-up {
+  animation: slide-up 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.animate-slide-in {
+  animation: slide-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+input[type='range'] {
+  accent-color: var(--color-brand);
+}
