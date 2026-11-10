@@ -117,7 +117,7 @@ export interface JourneyNav {
 const SWIPE_PX = 60
 
 /**
- * Detail spojení. Swipe doleva = dřívější spojení, swipe doprava = pozdější (jako v IDOSu).
+ * Detail spojení. Tah prstem doleva = pozdější spojení, doprava = dřívější (jako v IDOSu).
  * Totéž tlačítky ‹ › nebo šipkami na klávesnici.
  */
 export function JourneySheet({ journey, nav, onClose }: { journey: Journey | null; nav: JourneyNav; onClose: () => void }) {
@@ -132,8 +132,8 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
   const go = (dir: 'prev' | 'next') => {
     const n = navRef.current
     if ((dir === 'prev' && !n.canPrev) || (dir === 'next' && !n.canNext) || n.loading) return
-    // prst jde doleva -> nový obsah přijede zprava, a naopak
-    setEnter(dir === 'prev' ? 'from-right' : 'from-left')
+    // pozdější přijede zprava (prst táhl doleva), dřívější zleva
+    setEnter(dir === 'next' ? 'from-right' : 'from-left')
     n.go(dir)
   }
 
@@ -162,8 +162,8 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
     if (t.horizontal) setDx(mx)
   }
   const onTouchEnd = () => {
-    if (dx <= -SWIPE_PX) go('prev')
-    else if (dx >= SWIPE_PX) go('next')
+    if (dx <= -SWIPE_PX) go('next')
+    else if (dx >= SWIPE_PX) go('prev')
     setDx(0)
     touch.current = null
   }
@@ -263,7 +263,7 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
         )}
       </div>
       </div>
-      <p className="pb-6 text-center text-[11px] text-subtle">Swipe doleva = dřívější spoj · doprava = pozdější</p>
+      <p className="pb-6 text-center text-[11px] text-subtle">Táhni doleva = pozdější spoj · doprava = dřívější</p>
     </Sheet>
   )
 }
