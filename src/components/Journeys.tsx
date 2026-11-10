@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type TouchEvent } from 'react'
 import { formatDistance } from '../lib/geo'
-import { firstWalk, transitLegs, type Journey } from '../lib/journeys'
-import { settingsStore, useStore } from '../lib/store'
+import { firstWalk, shiftLeg, transitLegs, type Journey, type TransitLeg } from '../lib/journeys'
+import { settingsStore, speedKmh, useStore } from '../lib/store'
 import { quoteJourney } from '../lib/tickets'
 import { TicketInfo } from './TicketInfo'
 import { fmtKc, fmtTime, IconSparkle, IconWalk, LineBadge, Sheet, useNow, VEHICLE_LABEL } from './ui'
@@ -117,31 +117,34 @@ export interface JourneyNav {
 const SWIPE_PX = 60
 
 /**
- * Detail spojení. Tah prstem doleva = pozdější spojení, doprava = dřívější (jako v IDOSu).
- * Totéž tlačítky ‹ › nebo šipkami na klávesnici.
+ * Detail spojení.
+ * - Karta úseku: tah doleva = pozdější spoj na tomto úseku, doprava = dřívější (jako v IDOSu).
+ *   Předchozí úseky zůstanou, zbytek cesty se přepočítá.
+ * - Tlačítka nahoře / šipky na klávesnici: celé dřívější / pozdější spojení.
  */
 export function JourneySheet({ journey, nav, onClose }: { journey: Journey | null; nav: JourneyNav; onClose: () => void }) {
   const settings = useStore(settingsStore)
   const now = useNow(5000)
-  const [dx, setDx] = useState(0)
-  const [enter, setEnter] = useState<'' | 'from-left' | 'from-right'>('')
-  const touch = useRef<{ x: number; y: number; horizontal: boolean | null } | null>(null)
+  // upravené spojení (po výměně spoje na úseku) – platí jen pro spojení, ze kterého vzniklo
+  const [override, setOverride] = useState<{ baseId: string; j: Journey } | null>(null)
+  const [busyLeg, setBusyLeg] = useState<number | null>(null)
+  const [note, setNote] = useState<{ leg: number; text: string } | null>(null)
+  const [entered, setEntered] = useState<{ leg: number; from: 'left' | 'right' } | null>(null)
   const navRef = useRef(nav)
   navRef.current = nav
 
-  const go = (dir: 'prev' | 'next') => {
+  const goJourney = (dir: 'prev' | 'next') => {
     const n = navRef.current
     if ((dir === 'prev' && !n.canPrev) || (dir === 'next' && !n.canNext) || n.loading) return
-    // pozdější přijede zprava (prst táhl doleva), dřívější zleva
-    setEnter(dir === 'next' ? 'from-right' : 'from-left')
+    setNote(null)
     n.go(dir)
   }
 
   useEffect(() => {
     if (!journey) return
     const h = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowLeft') go('prev')
-      if (e.key === 'ArrowRight') go('next')
+      if (e.key === 'ArrowLeft') goJourney('prev')
+      if (e.key === 'ArrowRight') goJourney('next')
     }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
@@ -149,10 +152,133 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
   }, [!!journey])
 
   if (!journey) return null
-  const q = quoteJourney(journey, settings)
-  const departed = journey.start < now - 30000
+  const shown = override?.baseId === journey.id ? override.j : journey
+  const q = quoteJourney(shown, settings)
+  const departed = shown.start < now - 30000
+  const dest = settings.destination
 
-  const onTouchStart = (e: TouchEvent) => (touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, horizontal: null })
+  const shift = async (legIndex: number, dir: 'prev' | 'next') => {
+    if (!dest || busyLeg !== null) return
+    setBusyLeg(legIndex)
+    setNote(null)
+    try {
+      const j = await shiftLeg(shown, legIndex, dir, dest, speedKmh(settings))
+      if (j) {
+        setOverride({ baseId: journey.id, j })
+        setEntered({ leg: legIndex, from: dir === 'next' ? 'right' : 'left' })
+      } else {
+        setNote({
+          leg: legIndex,
+          text: dir === 'prev' ? 'Dřívější spoj už nestihneš.' : 'Pozdější spoj odtud v příští hodině nejede.',
+        })
+      }
+    } catch (e) {
+      setNote({ leg: legIndex, text: (e as Error).message })
+    } finally {
+      setBusyLeg(null)
+    }
+  }
+
+  return (
+    <Sheet open onClose={onClose}>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <button
+          onClick={() => goJourney('prev')}
+          disabled={!nav.canPrev || nav.loading}
+          className="rounded-full bg-highlight px-3 py-1.5 text-sm font-semibold text-muted hover:text-white disabled:opacity-30"
+        >
+          ‹ Dřívější
+        </button>
+        <span className="text-xs text-subtle">{nav.loading ? 'Načítám…' : 'celé spojení'}</span>
+        <button
+          onClick={() => goJourney('next')}
+          disabled={!nav.canNext || nav.loading}
+          className="rounded-full bg-highlight px-3 py-1.5 text-sm font-semibold text-muted hover:text-white disabled:opacity-30"
+        >
+          Pozdější ›
+        </button>
+      </div>
+
+      <div className="flex items-baseline justify-between pb-1">
+        <div className="text-2xl font-black tabular-nums">
+          {fmtTime(shown.start)} → {fmtTime(shown.end)}
+        </div>
+        <div className="font-bold text-muted">{shown.durationMin} min</div>
+      </div>
+      <p className={`text-sm font-semibold ${departed ? 'text-red-400' : shown.start - now < 120000 ? 'text-brand' : 'text-muted'}`}>
+        {departed ? 'Tohle spojení už odjelo' : leaveLabel(shown, now)} ·{' '}
+        <span className="font-normal text-subtle">
+          {shown.transfers === 0 ? 'bez přestupu' : shown.transfers === 1 ? '1 přestup' : `${shown.transfers} přestupy`}
+        </span>
+      </p>
+      {override?.baseId === journey.id ? (
+        <button onClick={() => setOverride(null)} className="mb-3 text-xs font-semibold text-brand">
+          Upraveno · vrátit původní spojení
+        </button>
+      ) : (
+        <div className="mb-3" />
+      )}
+
+      <ol className="space-y-1">
+        {shown.legs.map((l, i) =>
+          l.kind === 'walk' ? (
+            l.durationMin < 1 ? null : (
+              <li key={`w${i}`} className="flex items-center gap-3 py-1.5 pl-2 text-sm text-muted">
+                <IconWalk className="size-4" />
+                Pěšky {l.durationMin} min{l.meters > 0 && ` · ${formatDistance(l.meters)}`}
+                {i === 0 && l.to.name ? ` na ${l.to.name}` : i === shown.legs.length - 1 ? ' do cíle' : ' (přestup)'}
+              </li>
+            )
+          ) : (
+            <LegCard
+              key={`${l.line}@${l.from.scheduled}`}
+              leg={l}
+              busy={busyLeg === i}
+              note={note?.leg === i ? note.text : null}
+              enterFrom={entered?.leg === i ? entered.from : null}
+              canShift={!!dest && !!l.from.stopId}
+              onShift={(dir) => shift(i, dir)}
+            />
+          ),
+        )}
+      </ol>
+
+      <div className="mt-4 space-y-2">
+        <TicketInfo q={q} category={settings.category} />
+        {q.nonPid.length > 0 && (
+          <p className="rounded-xl bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            Úsek {q.nonPid.map((l) => `${l.line} (${l.from.name} → ${l.to.name})`).join(', ')} nevede po síti PID – jízdenku na něj kup u
+            dopravce{q.nonPid[0].agency ? ` (${q.nonPid[0].agency})` : ''}.
+          </p>
+        )}
+      </div>
+      <p className="py-5 text-center text-[11px] text-subtle">Kartu spoje táhni doleva = pozdější spoj · doprava = dřívější</p>
+    </Sheet>
+  )
+}
+
+/** Karta jednoho úseku; tahem do stran se vymění spoj na tomto úseku. */
+function LegCard({
+  leg: l,
+  busy,
+  note,
+  enterFrom,
+  canShift,
+  onShift,
+}: {
+  leg: TransitLeg
+  busy: boolean
+  note: string | null
+  enterFrom: 'left' | 'right' | null
+  canShift: boolean
+  onShift: (dir: 'prev' | 'next') => void
+}) {
+  const [dx, setDx] = useState(0)
+  const touch = useRef<{ x: number; y: number; horizontal: boolean | null } | null>(null)
+
+  const onTouchStart = (e: TouchEvent) => {
+    if (canShift) touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, horizontal: null }
+  }
   const onTouchMove = (e: TouchEvent) => {
     const t = touch.current
     if (!t) return
@@ -162,108 +288,75 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
     if (t.horizontal) setDx(mx)
   }
   const onTouchEnd = () => {
-    if (dx <= -SWIPE_PX) go('next')
-    else if (dx >= SWIPE_PX) go('prev')
+    // prst doleva = pozdější spoj, doprava = dřívější
+    if (dx <= -SWIPE_PX) onShift('next')
+    else if (dx >= SWIPE_PX) onShift('prev')
     setDx(0)
     touch.current = null
   }
 
+  const anim = enterFrom === 'right' ? 'animate-enter-right' : enterFrom === 'left' ? 'animate-enter-left' : ''
   return (
-    <Sheet open onClose={onClose}>
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <button
-          onClick={() => go('prev')}
-          disabled={!nav.canPrev || nav.loading}
-          className="rounded-full bg-highlight px-3 py-1.5 text-sm font-semibold text-muted hover:text-white disabled:opacity-30"
-        >
-          ‹ Dřívější
-        </button>
-        <span className="text-xs text-subtle">{nav.loading ? 'Načítám…' : (nav.position ?? '')}</span>
-        <button
-          onClick={() => go('next')}
-          disabled={!nav.canNext || nav.loading}
-          className="rounded-full bg-highlight px-3 py-1.5 text-sm font-semibold text-muted hover:text-white disabled:opacity-30"
-        >
-          Pozdější ›
-        </button>
-      </div>
-
+    <li className="relative overflow-hidden rounded-2xl bg-highlight">
+      {/* co se stane po puštění – vidět pod kartou při tažení */}
+      {dx !== 0 && (
+        <div className={`absolute inset-0 flex items-center px-4 text-sm font-bold text-brand ${dx < 0 ? 'justify-end' : 'justify-start'}`}>
+          {dx < 0 ? 'Pozdější spoj ›' : '‹ Dřívější spoj'}
+        </div>
+      )}
       <div
-        key={journey.id}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
-        onAnimationEnd={() => setEnter('')}
-        className={enter === 'from-right' ? 'animate-enter-right' : enter === 'from-left' ? 'animate-enter-left' : ''}
-        style={{
-          transform: dx ? `translateX(${dx * 0.6}px)` : undefined,
-          opacity: dx ? Math.max(0.4, 1 - Math.abs(dx) / 400) : undefined,
-          transition: dx ? 'none' : 'transform .2s, opacity .2s',
-        }}
+        className={`relative bg-surface p-3 ${anim} ${busy ? 'opacity-60' : ''}`}
+        style={{ transform: dx ? `translateX(${dx * 0.7}px)` : undefined, transition: dx ? 'none' : 'transform .2s' }}
       >
-      <div className="flex items-baseline justify-between pb-1">
-        <div className="text-2xl font-black tabular-nums">
-          {fmtTime(journey.start)} → {fmtTime(journey.end)}
+        <div className="flex items-center gap-3">
+          <LineBadge dep={{ line: l.line, vehicle: l.vehicle, isNight: false }} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate font-semibold">{l.headsign}</div>
+            <div className="text-xs text-subtle">
+              {VEHICLE_LABEL[l.vehicle]} · {l.stops} {l.stops === 1 ? 'zastávka' : l.stops < 5 ? 'zastávky' : 'zastávek'} · {l.durationMin} min
+              {l.realTime && (l.delayMin ? <span className="text-amber-400"> · zpoždění {l.delayMin} min</span> : <span className="text-brand"> · včas</span>)}
+            </div>
+          </div>
+          {canShift && (
+            <div className="flex shrink-0 gap-1">
+              <button
+                onClick={() => onShift('prev')}
+                disabled={busy}
+                className="rounded-full bg-highlight px-2.5 py-1 text-muted hover:text-white"
+                aria-label="Dřívější spoj na tomto úseku"
+              >
+                ‹
+              </button>
+              <button
+                onClick={() => onShift('next')}
+                disabled={busy}
+                className="rounded-full bg-highlight px-2.5 py-1 text-muted hover:text-white"
+                aria-label="Pozdější spoj na tomto úseku"
+              >
+                ›
+              </button>
+            </div>
+          )}
         </div>
-        <div className="font-bold text-muted">{journey.durationMin} min</div>
+        <div className="mt-3 grid grid-cols-[3rem_1fr] gap-x-2 gap-y-1.5 text-sm">
+          <span className="font-bold tabular-nums">{fmtTime(l.from.time)}</span>
+          <span>
+            {l.from.name}
+            {l.from.track && <span className="text-subtle"> · nást. {l.from.track}</span>}
+          </span>
+          <span className="font-bold tabular-nums text-muted">{fmtTime(l.to.time)}</span>
+          <span className="text-muted">
+            {l.to.name}
+            {l.to.track && <span className="text-subtle"> · nást. {l.to.track}</span>}
+          </span>
+        </div>
+        {l.cancelled && <p className="mt-2 text-sm font-semibold text-red-400">Spoj je zrušen.</p>}
+        {busy && <p className="mt-2 text-xs text-muted">Hledám jiný spoj…</p>}
+        {note && <p className="mt-2 text-xs text-amber-300">{note}</p>}
       </div>
-      <p className={`mb-4 text-sm font-semibold ${departed ? 'text-red-400' : journey.start - now < 120000 ? 'text-brand' : 'text-muted'}`}>
-        {departed ? 'Tohle spojení už odjelo' : leaveLabel(journey, now)} ·{' '}
-        <span className="font-normal text-subtle">{journey.transfers === 0 ? 'bez přestupu' : journey.transfers === 1 ? '1 přestup' : `${journey.transfers} přestupy`}</span>
-      </p>
-
-
-      <ol className="space-y-1">
-        {journey.legs.map((l, i) =>
-          l.kind === 'walk' ? (
-            l.durationMin < 1 ? null : (
-              <li key={i} className="flex items-center gap-3 py-1.5 pl-2 text-sm text-muted">
-                <IconWalk className="size-4" />
-                Pěšky {l.durationMin} min{l.meters > 0 && ` · ${formatDistance(l.meters)}`}
-                {i === 0 && l.to.name ? ` na ${l.to.name}` : i === journey.legs.length - 1 ? ' do cíle' : ' (přestup)'}
-              </li>
-            )
-          ) : (
-            <li key={i} className="rounded-2xl bg-surface p-3">
-              <div className="flex items-center gap-3">
-                <LineBadge dep={{ line: l.line, vehicle: l.vehicle, isNight: false }} />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-semibold">{l.headsign}</div>
-                  <div className="text-xs text-subtle">
-                    {VEHICLE_LABEL[l.vehicle]} · {l.stops} {l.stops === 1 ? 'zastávka' : l.stops < 5 ? 'zastávky' : 'zastávek'} · {l.durationMin} min
-                    {l.realTime && (l.delayMin ? <span className="text-amber-400"> · zpoždění {l.delayMin} min</span> : <span className="text-brand"> · včas</span>)}
-                  </div>
-                </div>
-              </div>
-              <div className="mt-3 grid grid-cols-[3rem_1fr] gap-x-2 gap-y-1.5 text-sm">
-                <span className="font-bold tabular-nums">{fmtTime(l.from.time)}</span>
-                <span>
-                  {l.from.name}
-                  {l.from.track && <span className="text-subtle"> · nást. {l.from.track}</span>}
-                </span>
-                <span className="font-bold tabular-nums text-muted">{fmtTime(l.to.time)}</span>
-                <span className="text-muted">
-                  {l.to.name}
-                  {l.to.track && <span className="text-subtle"> · nást. {l.to.track}</span>}
-                </span>
-              </div>
-              {l.cancelled && <p className="mt-2 text-sm font-semibold text-red-400">Spoj je zrušen.</p>}
-            </li>
-          ),
-        )}
-      </ol>
-
-      <div className="mt-4 space-y-2 pb-6">
-        <TicketInfo q={q} category={settings.category} />
-        {q.nonPid.length > 0 && (
-          <p className="rounded-xl bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-            Úsek {q.nonPid.map((l) => `${l.line} (${l.from.name} → ${l.to.name})`).join(', ')} nevede po síti PID – jízdenku na něj kup u dopravce
-            {q.nonPid[0].agency ? ` (${q.nonPid[0].agency})` : ''}.
-          </p>
-        )}
-      </div>
-      </div>
-      <p className="pb-6 text-center text-[11px] text-subtle">Táhni doleva = pozdější spoj · doprava = dřívější</p>
-    </Sheet>
+    </li>
   )
 }

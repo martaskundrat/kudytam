@@ -10,6 +10,8 @@ import { platformZones, zonesNear } from './stations'
 
 export interface LegStop {
   name: string
+  /** ID zastávky v Transitous (např. "cz-PID_U1040Z102P") – pro hledání odtud */
+  stopId?: string
   gtfsId?: string
   lat: number
   lon: number
@@ -84,6 +86,7 @@ function stopOf(p: any, at: 'departure' | 'arrival'): LegStop {
   const s = Date.parse(p[at === 'departure' ? 'scheduledDeparture' : 'scheduledArrival'] ?? p[at])
   return {
     name: p.name === 'START' || p.name === 'END' ? '' : p.name,
+    stopId: p.stopId ?? undefined,
     gtfsId: gtfsOf(p.stopId),
     lat: p.lat,
     lon: p.lon,
@@ -178,21 +181,27 @@ async function parse(data: any, origin: LatLon & { name?: string }, dest: Place)
   return mergeJourneys(journeys.filter((j) => j.legs.some((l) => l.kind === 'transit')))
 }
 
+function baseParams(from: string, dest: Place, kmh: number, maxPre: number) {
+  return {
+    fromPlace: from,
+    toPlace: `${dest.lat},${dest.lon}`,
+    pedestrianSpeed: (kmh / 3.6).toFixed(2),
+    maxPreTransitTime: String(Math.round(maxPre)),
+    maxPostTransitTime: '900',
+    detailedTransfers: 'false',
+    language: 'cs',
+  }
+}
+
 export async function planJourneys(origin: LatLon & { name?: string }, dest: Place, settings: Settings, kmh: number): Promise<JourneyPage> {
   const speed = kmh / 3.6 // m/s
   // první úsek pěšky smí vést až na zastávky v „širším okolí“ (cesta po ulicích ~1,3× delší)
-  const maxPre = Math.round(Math.min(1800, Math.max(600, (settings.wideRadius * 1.3) / speed)))
+  const maxPre = Math.min(1800, Math.max(600, (settings.wideRadius * 1.3) / speed))
   const query = new URLSearchParams({
-    fromPlace: `${origin.lat},${origin.lon}`,
-    toPlace: `${dest.lat},${dest.lon}`,
-    pedestrianSpeed: speed.toFixed(2),
-    maxPreTransitTime: String(maxPre),
-    maxPostTransitTime: '900',
+    ...baseParams(`${origin.lat},${origin.lon}`, dest, kmh, maxPre),
     searchWindow: '2700',
     numItineraries: '6',
     maxItineraries: '10',
-    detailedTransfers: 'false',
-    language: 'cs',
   }).toString()
   const data = await fetchPlan(query)
   return { journeys: await parse(data, origin, dest), prev: data.previousPageCursor, next: data.nextPageCursor, query }
@@ -210,6 +219,71 @@ export async function morePage(page: JourneyPage, dir: 'prev' | 'next', origin: 
     prev: dir === 'prev' ? data.previousPageCursor : page.prev,
     next: dir === 'next' ? data.nextPageCursor : page.next,
   }
+}
+
+/** Rezerva, aby „pozdější“ nebyl tentýž spoj a „dřívější“ nebyl na hraně */
+const SAME_TRIP_MS = 30000
+const sumWalkMs = (legs: Leg[]) => legs.reduce((t, l) => t + (l.kind === 'walk' ? l.durationMin * 60000 : 0), 0)
+
+/**
+ * Jiný spoj na jednom úseku spojení (jako v IDOSu): `next` = pozdější odjezd z nástupní
+ * zastávky úseku, `prev` = dřívější, který ale po předchozím úseku ještě stihneš.
+ * Úseky před ním zůstanou, zbytek cesty do cíle se přepočítá.
+ * Vrací null, pokud jiný spoj neexistuje.
+ */
+export async function shiftLeg(j: Journey, legIndex: number, dir: 'prev' | 'next', dest: Place, kmh: number): Promise<Journey | null> {
+  const leg = j.legs[legIndex]
+  if (leg?.kind !== 'transit' || !leg.from.stopId) return null
+  const prefix = j.legs.slice(0, legIndex)
+  const lastIdx = prefix.map((l) => l.kind).lastIndexOf('transit')
+  const dep = leg.from.time
+
+  let time: number
+  let windowS: number
+  if (dir === 'next') {
+    time = dep + SAME_TRIP_MS
+    windowS = 3600
+  } else {
+    // nejdřívější okamžik, kdy můžeš na zastávce být: po příjezdu předchozím spojem a přestupu,
+    // u prvního úseku až po cestě pěšky z výchozího místa (vyrazit dřív než teď nejde)
+    const from =
+      lastIdx >= 0
+        ? (prefix[lastIdx] as TransitLeg).to.time + sumWalkMs(prefix.slice(lastIdx + 1))
+        : Date.now() + sumWalkMs(prefix)
+    if (from >= dep - SAME_TRIP_MS) return null
+    time = from
+    windowS = Math.max(60, Math.round((dep - from) / 1000))
+  }
+  const query = new URLSearchParams({
+    ...baseParams(leg.from.stopId, dest, kmh, 300), // ze zastávky jen přechod na jiné nástupiště
+    time: new Date(time).toISOString(),
+    searchWindow: String(windowS),
+    numItineraries: '4',
+    maxItineraries: '8',
+  }).toString()
+  const data = await fetchPlan(query)
+  const cands = await parse(data, { lat: leg.from.lat, lon: leg.from.lon, name: leg.from.name }, dest)
+  const firstDep = (c: Journey) => transitLegs(c)[0]?.from.time ?? c.start
+  const pick =
+    dir === 'next'
+      ? cands.filter((c) => firstDep(c) > dep + SAME_TRIP_MS - 1000).sort((a, b) => firstDep(a) - firstDep(b) || a.end - b.end)[0]
+      : cands
+          .filter((c) => firstDep(c) < dep - SAME_TRIP_MS + 1000 && c.start >= time - 1000)
+          .sort((a, b) => firstDep(b) - firstDep(a) || a.end - b.end)[0]
+  if (!pick) return null
+
+  const legs = [...prefix, ...pick.legs]
+  const start = lastIdx >= 0 ? j.start : pick.start - sumWalkMs(prefix)
+  const out: Journey = {
+    id: '',
+    start,
+    end: pick.end,
+    durationMin: Math.round((pick.end - start) / 60000),
+    transfers: Math.max(0, legs.filter((l) => l.kind === 'transit').length - 1),
+    legs,
+  }
+  out.id = journeyKey(out)
+  return out
 }
 
 export const transitLegs = (j: Journey) => j.legs.filter((l): l is TransitLeg => l.kind === 'transit')
