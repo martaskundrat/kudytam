@@ -93,25 +93,33 @@ function stopOf(p: any, at: 'departure' | 'arrival'): LegStop {
   }
 }
 
-export async function planJourneys(origin: LatLon & { name?: string }, dest: Place, settings: Settings, kmh: number): Promise<Journey[]> {
-  const speed = kmh / 3.6 // m/s
-  // první úsek pěšky smí vést až na zastávky v „širším okolí“ (cesta po ulicích ~1,3× delší)
-  const maxPre = Math.round(Math.min(1800, Math.max(600, (settings.wideRadius * 1.3) / speed)))
-  const params = new URLSearchParams({
-    fromPlace: `${origin.lat},${origin.lon}`,
-    toPlace: `${dest.lat},${dest.lon}`,
-    pedestrianSpeed: speed.toFixed(2),
-    maxPreTransitTime: String(maxPre),
-    maxPostTransitTime: '900',
-    searchWindow: '2700',
-    numItineraries: '6',
-    maxItineraries: '10',
-    detailedTransfers: 'false',
-    language: 'cs',
-  })
-  const res = await fetch(`/api/transitous/plan?${params}`)
+export interface JourneyPage {
+  journeys: Journey[]
+  /** kurzory Transitous pro dřívější / pozdější spojení */
+  prev?: string
+  next?: string
+  /** parametry dotazu – pro načtení dalších stránek se musí poslat beze změny */
+  query: string
+}
+
+const fetchPlan = async (query: string, cursor?: string) => {
+  const res = await fetch(`/api/transitous/plan?${query}${cursor ? `&pageCursor=${encodeURIComponent(cursor)}` : ''}`)
   if (!res.ok) throw new Error(res.status === 429 ? 'Vyhledávač spojení je přetížený, zkus to za chvíli.' : `Vyhledávání spojení selhalo (${res.status}).`)
-  const data = await res.json()
+  return res.json()
+}
+
+/** Stabilní ID spojení (stejné i po obnovení dat) – podle linek a plánovaných odjezdů. */
+const journeyKey = (j: Journey) =>
+  j.legs.map((l) => (l.kind === 'transit' ? `${l.line}@${l.from.scheduled}` : 'w')).join('|')
+
+/** Sloučí spojení (např. z více stránek), bez duplicit, seřazená podle odjezdu. */
+export function mergeJourneys(...lists: Journey[][]): Journey[] {
+  const map = new Map<string, Journey>()
+  for (const list of lists) for (const j of list) map.set(j.id, j)
+  return [...map.values()].sort((a, b) => a.start - b.start || a.end - b.end)
+}
+
+async function parse(data: any, origin: LatLon & { name?: string }, dest: Place): Promise<Journey[]> {
   const zonesOf = await platformZones()
   const zonesAt = await zonesNear()
 
@@ -165,16 +173,43 @@ export async function planJourneys(origin: LatLon & { name?: string }, dest: Pla
     }
   })
 
-  // jen spoje s MHD, které ještě stihneš; bez duplicit; podle odjezdu
-  const now = Date.now()
-  const seen = new Set<string>()
-  return journeys
-    .filter((j) => j.legs.some((l) => l.kind === 'transit') && j.start >= now - 60000)
-    .filter((j) => {
-      const key = j.legs.map((l) => (l.kind === 'transit' ? `${l.line}@${l.from.time}` : 'w')).join('|')
-      return seen.has(key) ? false : (seen.add(key), true)
-    })
-    .sort((a, b) => a.start - b.start || a.end - b.end)
+  // jen spoje s MHD; stabilní ID místo ID z Transitous (to se mezi dotazy mění)
+  for (const j of journeys) j.id = journeyKey(j)
+  return mergeJourneys(journeys.filter((j) => j.legs.some((l) => l.kind === 'transit')))
+}
+
+export async function planJourneys(origin: LatLon & { name?: string }, dest: Place, settings: Settings, kmh: number): Promise<JourneyPage> {
+  const speed = kmh / 3.6 // m/s
+  // první úsek pěšky smí vést až na zastávky v „širším okolí“ (cesta po ulicích ~1,3× delší)
+  const maxPre = Math.round(Math.min(1800, Math.max(600, (settings.wideRadius * 1.3) / speed)))
+  const query = new URLSearchParams({
+    fromPlace: `${origin.lat},${origin.lon}`,
+    toPlace: `${dest.lat},${dest.lon}`,
+    pedestrianSpeed: speed.toFixed(2),
+    maxPreTransitTime: String(maxPre),
+    maxPostTransitTime: '900',
+    searchWindow: '2700',
+    numItineraries: '6',
+    maxItineraries: '10',
+    detailedTransfers: 'false',
+    language: 'cs',
+  }).toString()
+  const data = await fetchPlan(query)
+  return { journeys: await parse(data, origin, dest), prev: data.previousPageCursor, next: data.nextPageCursor, query }
+}
+
+/** Načte dřívější (`prev`) nebo pozdější (`next`) spojení ke stejnému dotazu. */
+export async function morePage(page: JourneyPage, dir: 'prev' | 'next', origin: LatLon & { name?: string }, dest: Place): Promise<JourneyPage> {
+  const cursor = page[dir]
+  if (!cursor) return page
+  const data = await fetchPlan(page.query, cursor)
+  const more = await parse(data, origin, dest)
+  return {
+    query: page.query,
+    journeys: mergeJourneys(page.journeys, more),
+    prev: dir === 'prev' ? data.previousPageCursor : page.prev,
+    next: dir === 'next' ? data.nextPageCursor : page.next,
+  }
 }
 
 export const transitLegs = (j: Journey) => j.legs.filter((l): l is TransitLeg => l.kind === 'transit')

@@ -76,3 +76,31 @@ body {
 input[type='range'] {
   accent-color: var(--color-brand);
 }
+
+/* přepnutí na dřívější / pozdější spojení v detailu */
+@keyframes enter-right {
+  from {
+    transform: translateX(40%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+@keyframes enter-left {
+  from {
+    transform: translateX(-40%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.animate-enter-right {
+  animation: enter-right 0.22s ease-out;
+}
+.animate-enter-left {
+  animation: enter-left 0.22s ease-out;
+}

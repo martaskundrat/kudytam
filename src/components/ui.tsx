@@ -1,4 +1,4 @@
-import { useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode, type TouchEvent } from 'react'
 import type { Departure, VehicleType } from '../types'
 
 /* ---------- ikony (inline SVG, bez závislostí) ---------- */
@@ -65,28 +65,61 @@ export function LineBadge({ dep, size = 'md' }: { dep: Pick<Departure, 'line' | 
 }
 
 /* ---------- bottom sheet ---------- */
+/**
+ * Spodní panel. Zavře se: křížkem, klepnutím mimo, stažením dolů za horní lištu,
+ * klávesou Esc i systémovým tlačítkem/gestem Zpět (přes History API).
+ */
 export function Sheet({ open, onClose, title, children }: { open: boolean; onClose: () => void; title?: string; children: ReactNode }) {
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  const [dragY, setDragY] = useState(0)
+  const startY = useRef<number | null>(null)
+
   useEffect(() => {
     if (!open) return
-    const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    window.addEventListener('keydown', h)
-    return () => window.removeEventListener('keydown', h)
-  }, [open, onClose])
+    const id = Math.random().toString(36).slice(2)
+    history.pushState({ ...(history.state ?? {}), sheet: id }, '')
+    const onPop = () => closeRef.current()
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && closeRef.current()
+    window.addEventListener('popstate', onPop)
+    window.addEventListener('keydown', onKey)
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('popstate', onPop)
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = ''
+      // zavřeno jinak než tlačítkem Zpět – záznam v historii zneutralizujeme
+      if (history.state?.sheet === id) history.replaceState({ ...history.state, sheet: undefined }, '')
+    }
+  }, [open])
+
   if (!open) return null
+  const dragHandlers = {
+    onTouchStart: (e: TouchEvent) => (startY.current = e.touches[0].clientY),
+    onTouchMove: (e: TouchEvent) => startY.current !== null && setDragY(Math.max(0, e.touches[0].clientY - startY.current)),
+    onTouchEnd: () => {
+      if (dragY > 90) onClose()
+      setDragY(0)
+      startY.current = null
+    },
+  }
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center">
       <div className="animate-fade-in absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-      <div className="animate-slide-up pb-safe relative max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-elevated px-5 pt-3">
-        <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-zinc-600" />
-        {title && (
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-xl font-bold">{title}</h2>
-            <button onClick={onClose} className="rounded-full p-2 text-muted hover:bg-highlight" aria-label="Zavřít">
-              <IconClose />
-            </button>
+      <div
+        className="animate-slide-up pb-safe relative flex max-h-[88dvh] w-full max-w-lg flex-col rounded-t-3xl bg-elevated"
+        style={{ transform: dragY ? `translateY(${dragY}px)` : undefined, transition: dragY ? 'none' : 'transform .2s' }}
+      >
+        <div className="flex shrink-0 touch-none items-center gap-2 px-5 pt-3 pb-2" {...dragHandlers}>
+          <div className="flex-1">
+            <div className="mx-auto mb-2 h-1.5 w-10 rounded-full bg-zinc-600" />
+            {title && <h2 className="text-xl font-bold">{title}</h2>}
           </div>
-        )}
-        {children}
+          <button onClick={onClose} className="-mr-2 self-start rounded-full bg-highlight p-2 text-muted hover:text-white" aria-label="Zavřít">
+            <IconClose />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5">{children}</div>
       </div>
     </div>
   )

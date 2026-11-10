@@ -6,7 +6,7 @@ import { RideSheet } from './components/RideSheet'
 import { StationPicker } from './components/StationPicker'
 import { Button, IconBus, IconFlag, IconMenu, IconPin, IconRefresh, IconSwap, useNow } from './components/ui'
 import { getPosition } from './lib/geo'
-import { planJourneys, type Journey } from './lib/journeys'
+import { mergeJourneys, morePage, planJourneys, type Journey, type JourneyPage } from './lib/journeys'
 import { plan, type PlanResult } from './lib/planner'
 import { settingsStore, speedKmh, useStore } from './lib/store'
 import { getProvider, type TransitProvider } from './lib/transit'
@@ -26,11 +26,16 @@ export default function App() {
   const [provider, setProvider] = useState<TransitProvider | null>(null)
   const [position, setPosition] = useState<LatLon | null>(null)
   const [result, setResult] = useState<PlanResult | null>(null)
-  const [journeys, setJourneys] = useState<Journey[] | null>(null)
+  const [page, setPage] = useState<JourneyPage | null>(null)
+  const journeys = page?.journeys ?? null
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<Option | null>(null)
-  const [selectedJourney, setSelectedJourney] = useState<Journey | null>(null)
+  // vybrané spojení podle stabilního ID; poslední verze jako záloha, kdyby po obnovení z dat zmizelo
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const lastSelected = useRef<Journey | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const originRef = useRef<(LatLon & { name?: string }) | null>(null)
   const [updatedAt, setUpdatedAt] = useState<number | null>(null)
   const reqId = useRef(0)
 
@@ -59,8 +64,9 @@ export default function App() {
         setPosition(origin)
       }
       if (dest) {
-        const js = await planJourneys(origin, dest, settings, kmh)
-        if (id === reqId.current) setJourneys(js)
+        originRef.current = origin
+        const fresh = await planJourneys(origin, dest, settings, kmh)
+        if (id === reqId.current) setPage((old) => refreshPage(old, fresh))
       } else {
         const r = await plan(provider!, origin, null, settings, kmh)
         if (id === reqId.current) setResult(r)
@@ -87,18 +93,45 @@ export default function App() {
 
   const search = () => {
     setResult(null)
-    setJourneys(null)
+    setPage(null)
     if (dirty) settingsStore.set({ origin: draftOrigin, destination: draftDest })
     else load()
   }
 
   const clearDestination = () => {
     setDraftDest(null)
-    setJourneys(null)
+    setPage(null)
     settingsStore.set({ destination: null, origin: draftOrigin })
   }
 
   const soonest = result?.groups.flatMap((g) => g.options).find((o) => o.departure.predicted > now)
+  const selectedJourney = selectedId ? (journeys?.find((j) => j.id === selectedId) ?? lastSelected.current) : null
+  if (selectedJourney) lastSelected.current = selectedJourney
+  const selIdx = selectedJourney && journeys ? journeys.findIndex((j) => j.id === selectedJourney.id) : -1
+
+  /** Dřívější / pozdější spojení v detailu; na okraji načteného seznamu dotáhne další stránku. */
+  const navigate = async (dir: 'prev' | 'next') => {
+    if (!page || !selectedJourney || !dest || !originRef.current) return
+    let list = page.journeys
+    let i = list.findIndex((j) => j.id === selectedJourney.id)
+    let target = list[dir === 'prev' ? i - 1 : i + 1]
+    if (!target && page[dir]) {
+      setLoadingMore(true)
+      try {
+        const more = await morePage(page, dir, originRef.current, dest)
+        setPage(more)
+        list = more.journeys
+        i = list.findIndex((j) => j.id === selectedJourney.id)
+        target = list[dir === 'prev' ? i - 1 : i + 1]
+      } catch (e) {
+        setError((e as Error).message)
+      } finally {
+        setLoadingMore(false)
+      }
+    }
+    if (target) setSelectedId(target.id)
+  }
+
   const pick = journeys ? recommend(journeys, settings.nearRadius, now) : null
   const showDepartures = !dest && result
   const showJourneys = dest && journeys
@@ -215,7 +248,7 @@ export default function App() {
               .filter((j) => j.start >= now - 30000)
               .slice(0, 8)
               .map((j) => (
-                <JourneyCard key={j.id} j={j} now={now} pick={pick} onSelect={setSelectedJourney} />
+                <JourneyCard key={j.id} j={j} now={now} pick={pick} onSelect={(j) => setSelectedId(j.id)} />
               ))}
 
             <p className="pt-2 text-center text-xs leading-relaxed text-subtle">
@@ -281,7 +314,17 @@ export default function App() {
 
       <Menu open={menuOpen} onClose={() => setMenuOpen(false)} liveData={!!provider && !provider.isDemo} />
       <RideSheet option={selected} destination={null} onClose={() => setSelected(null)} />
-      <JourneySheet journey={selectedJourney} onClose={() => setSelectedJourney(null)} />
+      <JourneySheet
+        journey={selectedJourney}
+        onClose={() => setSelectedId(null)}
+        nav={{
+          canPrev: selIdx > 0 || !!page?.prev,
+          canNext: (journeys != null && selIdx >= 0 && selIdx < journeys.length - 1) || !!page?.next,
+          loading: loadingMore,
+          go: navigate,
+          position: selectedJourney ? `odjezd ${new Date(selectedJourney.start).toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}` : undefined,
+        }}
+      />
     </div>
   )
 }
@@ -303,4 +346,22 @@ function Skeleton() {
       ))}
     </div>
   )
+}
+
+/**
+ * Obnovení dat: čerstvá spojení nahradí stará (aktuální zpoždění), ale dřívější/pozdější
+ * spojení, která si uživatel už donačetl, zůstanou i s kurzory.
+ */
+function refreshPage(old: JourneyPage | null, fresh: JourneyPage): JourneyPage {
+  if (!old || old.query !== fresh.query || !fresh.journeys.length) return fresh
+  const first = fresh.journeys[0].start
+  const last = fresh.journeys[fresh.journeys.length - 1].start
+  const before = old.journeys.filter((j) => j.start < first)
+  const after = old.journeys.filter((j) => j.start > last)
+  return {
+    query: fresh.query,
+    journeys: mergeJourneys(before, after, fresh.journeys),
+    prev: before.length ? old.prev : fresh.prev,
+    next: after.length ? old.next : fresh.next,
+  }
 }

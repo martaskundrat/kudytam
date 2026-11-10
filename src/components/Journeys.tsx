@@ -1,4 +1,4 @@
-import { Fragment } from 'react'
+import { Fragment, useEffect, useRef, useState, type TouchEvent } from 'react'
 import { formatDistance } from '../lib/geo'
 import { firstWalk, transitLegs, type Journey } from '../lib/journeys'
 import { settingsStore, useStore } from '../lib/store'
@@ -105,20 +105,113 @@ export function JourneyCard({ j, now, pick, onSelect }: { j: Journey; now: numbe
   )
 }
 
-export function JourneySheet({ journey, onClose }: { journey: Journey | null; onClose: () => void }) {
+export interface JourneyNav {
+  /** je k dispozici dřívější / pozdější spojení (načtené nebo k donačtení) */
+  canPrev: boolean
+  canNext: boolean
+  loading: boolean
+  go: (dir: 'prev' | 'next') => void
+  position?: string
+}
+
+const SWIPE_PX = 60
+
+/**
+ * Detail spojení. Swipe doleva = dřívější spojení, swipe doprava = pozdější (jako v IDOSu).
+ * Totéž tlačítky ‹ › nebo šipkami na klávesnici.
+ */
+export function JourneySheet({ journey, nav, onClose }: { journey: Journey | null; nav: JourneyNav; onClose: () => void }) {
   const settings = useStore(settingsStore)
   const now = useNow(5000)
+  const [dx, setDx] = useState(0)
+  const [enter, setEnter] = useState<'' | 'from-left' | 'from-right'>('')
+  const touch = useRef<{ x: number; y: number; horizontal: boolean | null } | null>(null)
+  const navRef = useRef(nav)
+  navRef.current = nav
+
+  const go = (dir: 'prev' | 'next') => {
+    const n = navRef.current
+    if ((dir === 'prev' && !n.canPrev) || (dir === 'next' && !n.canNext) || n.loading) return
+    // prst jde doleva -> nový obsah přijede zprava, a naopak
+    setEnter(dir === 'prev' ? 'from-right' : 'from-left')
+    n.go(dir)
+  }
+
+  useEffect(() => {
+    if (!journey) return
+    const h = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft') go('prev')
+      if (e.key === 'ArrowRight') go('next')
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!journey])
+
   if (!journey) return null
   const q = quoteJourney(journey, settings)
+  const departed = journey.start < now - 30000
+
+  const onTouchStart = (e: TouchEvent) => (touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, horizontal: null })
+  const onTouchMove = (e: TouchEvent) => {
+    const t = touch.current
+    if (!t) return
+    const mx = e.touches[0].clientX - t.x
+    const my = e.touches[0].clientY - t.y
+    if (t.horizontal === null && Math.abs(mx) + Math.abs(my) > 10) t.horizontal = Math.abs(mx) > Math.abs(my)
+    if (t.horizontal) setDx(mx)
+  }
+  const onTouchEnd = () => {
+    if (dx <= -SWIPE_PX) go('prev')
+    else if (dx >= SWIPE_PX) go('next')
+    setDx(0)
+    touch.current = null
+  }
+
   return (
     <Sheet open onClose={onClose}>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <button
+          onClick={() => go('prev')}
+          disabled={!nav.canPrev || nav.loading}
+          className="rounded-full bg-highlight px-3 py-1.5 text-sm font-semibold text-muted hover:text-white disabled:opacity-30"
+        >
+          ‹ Dřívější
+        </button>
+        <span className="text-xs text-subtle">{nav.loading ? 'Načítám…' : (nav.position ?? '')}</span>
+        <button
+          onClick={() => go('next')}
+          disabled={!nav.canNext || nav.loading}
+          className="rounded-full bg-highlight px-3 py-1.5 text-sm font-semibold text-muted hover:text-white disabled:opacity-30"
+        >
+          Pozdější ›
+        </button>
+      </div>
+
+      <div
+        key={journey.id}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onAnimationEnd={() => setEnter('')}
+        className={enter === 'from-right' ? 'animate-enter-right' : enter === 'from-left' ? 'animate-enter-left' : ''}
+        style={{
+          transform: dx ? `translateX(${dx * 0.6}px)` : undefined,
+          opacity: dx ? Math.max(0.4, 1 - Math.abs(dx) / 400) : undefined,
+          transition: dx ? 'none' : 'transform .2s, opacity .2s',
+        }}
+      >
       <div className="flex items-baseline justify-between pb-1">
         <div className="text-2xl font-black tabular-nums">
           {fmtTime(journey.start)} → {fmtTime(journey.end)}
         </div>
         <div className="font-bold text-muted">{journey.durationMin} min</div>
       </div>
-      <p className={`mb-4 text-sm font-semibold ${journey.start - now < 120000 ? 'text-brand' : 'text-muted'}`}>{leaveLabel(journey, now)}</p>
+      <p className={`mb-4 text-sm font-semibold ${departed ? 'text-red-400' : journey.start - now < 120000 ? 'text-brand' : 'text-muted'}`}>
+        {departed ? 'Tohle spojení už odjelo' : leaveLabel(journey, now)} ·{' '}
+        <span className="font-normal text-subtle">{journey.transfers === 0 ? 'bez přestupu' : journey.transfers === 1 ? '1 přestup' : `${journey.transfers} přestupy`}</span>
+      </p>
+
 
       <ol className="space-y-1">
         {journey.legs.map((l, i) =>
@@ -126,7 +219,7 @@ export function JourneySheet({ journey, onClose }: { journey: Journey | null; on
             l.durationMin < 1 ? null : (
               <li key={i} className="flex items-center gap-3 py-1.5 pl-2 text-sm text-muted">
                 <IconWalk className="size-4" />
-                Pěšky {l.durationMin} min · {formatDistance(l.meters)}
+                Pěšky {l.durationMin} min{l.meters > 0 && ` · ${formatDistance(l.meters)}`}
                 {i === 0 && l.to.name ? ` na ${l.to.name}` : i === journey.legs.length - 1 ? ' do cíle' : ' (přestup)'}
               </li>
             )
@@ -169,6 +262,8 @@ export function JourneySheet({ journey, onClose }: { journey: Journey | null; on
           </p>
         )}
       </div>
+      </div>
+      <p className="pb-6 text-center text-[11px] text-subtle">Swipe doleva = dřívější spoj · doprava = pozdější</p>
     </Sheet>
   )
 }
