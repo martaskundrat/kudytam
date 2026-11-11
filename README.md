@@ -90,6 +90,31 @@ Když je cíl vzdušnou čarou do „širšího okolí“ (menu), nebo když ch�
 se srovnáním příjezdu s nejrychlejší MHD a tlačítkem **Navigovat**. Otevře [Mapy.com URL](https://developer.mapy.com/further-uses-of-mapycz/mapy-cz-url/)
 (`/fnc/v1/route`, `routeType=foot_fast` / `bike_road`, `navigate=true`). V telefonu se spustí aplikace Mapy.com, pokud je nainstalovaná, jinak web.
 
+## Rozšířené vyhledávání: sdílená kola a taxi
+
+`src/lib/mobility.ts` + `src/components/Mobility.tsx`. U nalezených spojení se navíc nabídne sdílené kolo a taxi.
+Tlačítkem **Vypnout rozšířené vyhledávání** nad výsledky se tyhle karty skryjí a Transitous se přestane ptát na trasu autem.
+Volba se pamatuje.
+
+- **Sdílené kolo – nextbike** (Praha, Říčany): živý [GBFS feed nextbike](https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_tg/gbfs.json) (CC0).
+  Hledá stanici s volným kolem v „širším okolí“ startu a stanici s volným stojanem u cíle a vybere nejrychlejší kombinaci.
+  Kolo se nabídne, jen když je na stojanu opravdu: počet ve `station_status` musí potvrdit i seznam kol ve `free_bike_status`
+  (bez rezervovaných a vyřazených), feed nesmí být starší než 10 min a stanice se musela ozvat v posledních 2 h.
+  Cena se počítá z ceníku GBFS (`system_pricing_plans`) podle regionu stanice (Praha 39 Kč / 30 min, Říčany 35 Kč / 30 min).
+  Minuty zdarma (`freeRides`, podle `region_id` stanice; jízda musí začít i skončit v regionu):
+  - Praha: prvních 15 min 2× denně pro předplatitele kupónu PID na Prahu v Lítačce ([PID](https://pid.cz/cykliste-v-pid/sdilena-kola/)).
+    Počítá se jen tehdy, když máš v menu aplikace zadaný aktivní kupón na Prahu.
+  - Říčany: prvních 15 min zdarma pro všechny (podle stanice, kde si kolo půjčíš), cena se ukáže jako 0 Kč.
+  Zbytek jízdy se platí podle ceníku poskytovatele.
+  Tlačítko otevře aplikaci nextbike přímo na stanici (`rental_uris`), navigace na kole vede přes Mapy.com.
+  Další systém stačí přidat do `BIKE_SYSTEMS`, pokud má veřejný GBFS se stanicemi. Rekola a Bolt veřejný feed nemají.
+- **Taxi – Uber, Bolt, Liftago**: čas a vzdálenost jízdy autem počítá Transitous (`directModes=WALK,CAR`,
+  `fastestDirectFactor=100`, jinak by zahodil spojení MHD pomalejší než auto). Počítá se s ~6 min na přistavení vozu.
+  Cena je **orientační rozpětí**, protože aplikace ceník nezveřejňují. Horní mez = maximální cena taxi v Praze
+  (cenový výměr hl. m. Prahy č. 3/2026: 70 Kč + 42 Kč/km), dolní mez 65 % z ní.
+  Uber se otevře s předvyplněným nástupem i cílem ([Uber deep links](https://developer.uber.com/docs/riders/ride-requests/tutorials/deep-links/introduction)).
+  Bolt a Liftago veřejný odkaz s trasou nemají: otevře se aplikace (Android intent / App Store) a cíl se zkopíruje do schránky.
+
 ## Domov
 
 V menu si nastavíš domov – konkrétní adresu (vyhledávání Transitous /geocode nad OpenStreetMap) nebo stanici. Tlačítko **Domů** pak vyhledá nejlepší spojení domů z aktuální polohy.

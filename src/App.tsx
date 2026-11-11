@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { RecommendationCard, StopCard } from './components/Departures'
 import { JourneyCard, JourneySheet, recommend, WalkCard } from './components/Journeys'
 import { Menu } from './components/Menu'
+import { BikeCards, TaxiCard } from './components/Mobility'
 import { RideSheet } from './components/RideSheet'
 import { StationPicker } from './components/StationPicker'
-import { Button, IconBus, IconFlag, IconHome, IconMenu, IconPin, IconRefresh, IconSwap, useNow } from './components/ui'
+import { Button, IconBike, IconBus, IconCar, IconFlag, IconHome, IconMenu, IconPin, IconRefresh, IconSwap, useNow } from './components/ui'
 import { distanceM, getPosition, travelMinutes } from './lib/geo'
 import { MAX_WALK_MIN, mergeJourneys, morePage, planJourneys, type Journey, type JourneyPage } from './lib/journeys'
 import { plan, type PlanResult } from './lib/planner'
@@ -82,7 +83,7 @@ export default function App() {
       if (id === reqId.current) setLoading(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider, kmh, settings.origin, dest, settings.nearRadius, settings.wideRadius, settings.thresholdMin])
+  }, [provider, kmh, settings.origin, dest, settings.nearRadius, settings.wideRadius, settings.thresholdMin, settings.extendedSearch])
 
   useEffect(() => {
     load()
@@ -164,6 +165,7 @@ export default function App() {
   const walkOption = dest && routeOrigin && walkCandidate && ((airToDest ?? Infinity) <= settings.wideRadius || walkCompetitive) ? walkCandidate : null
 
   const pick = journeys ? recommend(journeys, settings.nearRadius, now) : null
+  const extended = settings.extendedSearch !== false
   const showDepartures = !dest && result
   const showJourneys = dest && journeys
   const hasResults = showDepartures || showJourneys
@@ -281,6 +283,21 @@ export default function App() {
               </button>
             </div>
 
+            {/* rozšířené vyhledávání: sdílená kola a taxi */}
+            <div className="flex items-center justify-between gap-2 rounded-xl bg-highlight px-3 py-2 text-sm">
+              <span className="flex min-w-0 items-center gap-1.5 text-muted">
+                <IconBike className="size-4 shrink-0" />
+                <IconCar className="size-4 shrink-0" />
+                <span className="truncate">{extended ? 'Včetně sdílených kol a taxi' : 'Jen MHD a pěšky'}</span>
+              </span>
+              <button
+                onClick={() => settingsStore.set({ extendedSearch: !extended })}
+                className="shrink-0 rounded-full px-3 py-1 font-semibold text-brand ring-1 ring-brand/50 hover:bg-brand/10"
+              >
+                {extended ? 'Vypnout rozšířené vyhledávání' : 'Zapnout rozšířené vyhledávání'}
+              </button>
+            </div>
+
             {journeys.length === 0 && !walkOption && (
               <p className="rounded-xl bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
                 V příští hodině jsme nenašli žádné spojení. Zkus zvětšit „Širší okolí“ v menu nebo jiný čas.
@@ -297,6 +314,13 @@ export default function App() {
               .map((j) => (
                 <JourneyCard key={j.id} j={j} now={now} pick={pick} onSelect={(j) => setSelectedId(j.id)} />
               ))}
+
+            {extended && routeOrigin && (
+              <>
+                <BikeCards from={routeOrigin} to={dest} walkKmh={Math.min(kmh, 6.5)} settings={settings} now={now} journeys={journeys} />
+                {page?.car && <TaxiCard car={page.car} from={originRef.current ?? routeOrigin} to={dest} now={now} journeys={journeys} />}
+              </>
+            )}
 
             <p className="pt-2 text-center text-xs leading-relaxed text-subtle">
               Spojení:{' '}
@@ -408,6 +432,7 @@ function refreshPage(old: JourneyPage | null, fresh: JourneyPage): JourneyPage {
   return {
     query: fresh.query,
     walk: fresh.walk,
+    car: fresh.car,
     journeys: mergeJourneys(before, after, fresh.journeys),
     prev: before.length ? old.prev : fresh.prev,
     next: after.length ? old.next : fresh.next,

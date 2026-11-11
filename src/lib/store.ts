@@ -47,6 +47,7 @@ export const settingsStore = createStore<Settings>('kudytam.settings', {
   thresholdMin: 10,
   category: 'adult',
   coupons: [],
+  extendedSearch: true,
 })
 
 export function useStore<T>(store: { get: () => T; subscribe: (l: () => void) => () => void }): T {

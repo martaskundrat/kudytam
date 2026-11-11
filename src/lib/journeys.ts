@@ -124,6 +124,8 @@ export interface JourneyPage {
   journeys: Journey[]
   /** cesta pěšky, pokud je cíl v dosahu */
   walk?: DirectWalk
+  /** jízda autem (pro taxi) – jen při rozšířeném vyhledávání */
+  car?: DirectWalk
   /** kurzory Transitous pro dřívější / pozdější spojení */
   prev?: string
   next?: string
@@ -223,25 +225,43 @@ function baseParams(from: string, dest: Place, kmh: number, maxPre: number) {
   }
 }
 
+/** nejdelší jízda autem, kterou počítáme při rozšířeném vyhledávání (taxi) */
+const MAX_CAR_S = 2 * 3600
+
 export async function planJourneys(origin: LatLon & { name?: string }, dest: Place, settings: Settings, kmh: number): Promise<JourneyPage> {
   const speed = kmh / 3.6 // m/s
+  const extended = settings.extendedSearch !== false
   // první úsek pěšky smí vést až na zastávky v „širším okolí“ (cesta po ulicích ~1,3× delší)
   const maxPre = Math.min(1800, Math.max(600, (settings.wideRadius * 1.3) / speed))
+  const walkTime = Math.round(Math.max(MAX_WALK_MIN * 60, (settings.wideRadius * 1.6) / speed))
   const query = new URLSearchParams({
     ...baseParams(`${origin.lat},${origin.lon}`, dest, kmh, maxPre),
-    // i cesta pěšky (do 45 min) – jestli ji nabídnout, rozhoduje aplikace podle vzdálenosti a srovnání s MHD
-    directModes: 'WALK',
-    maxDirectTime: String(Math.round(Math.max(MAX_WALK_MIN * 60, (settings.wideRadius * 1.6) / speed))),
+    // i cesta pěšky (do 45 min) – jestli ji nabídnout, rozhoduje aplikace podle vzdálenosti a srovnání s MHD;
+    // při rozšířeném vyhledávání i autem (taxi)
+    directModes: extended ? 'WALK,CAR' : 'WALK',
+    maxDirectTime: String(extended ? MAX_CAR_S : walkTime),
+    // bez toho by Transitous zahodil spojení MHD, která jsou pomalejší než jízda autem
+    ...(extended ? { fastestDirectFactor: '100' } : {}),
     searchWindow: '2700',
     numItineraries: '6',
     maxItineraries: '10',
   }).toString()
   const data = await fetchPlan(query)
-  const direct = (data.direct ?? []).find((it: any) => (it.legs ?? []).every((l: any) => l.mode === 'WALK'))
-  const walk: DirectWalk | undefined = direct
-    ? { durationMin: Math.max(1, Math.round(direct.duration / 60)), meters: Math.round((direct.legs ?? []).reduce((m: number, l: any) => m + (l.distance ?? 0), 0)) }
-    : undefined
-  return { journeys: await parse(data, origin, dest), walk, prev: data.previousPageCursor, next: data.nextPageCursor, query }
+  const directOf = (mode: string): DirectWalk | undefined => {
+    const it = (data.direct ?? []).find((it: any) => (it.legs ?? []).length > 0 && it.legs.every((l: any) => l.mode === mode))
+    if (!it) return undefined
+    return { durationMin: Math.max(1, Math.round(it.duration / 60)), meters: Math.round(it.legs.reduce((m: number, l: any) => m + (l.distance ?? 0), 0)) }
+  }
+  const walk = directOf('WALK')
+  return {
+    journeys: await parse(data, origin, dest),
+    // delší limit kvůli autu nesmí nabízet delší pěší cesty než dřív
+    walk: walk && walk.durationMin * 60 <= walkTime ? walk : undefined,
+    car: extended ? directOf('CAR') : undefined,
+    prev: data.previousPageCursor,
+    next: data.nextPageCursor,
+    query,
+  }
 }
 
 /** Načte dřívější (`prev`) nebo pozdější (`next`) spojení ke stejnému dotazu. */
@@ -253,6 +273,7 @@ export async function morePage(page: JourneyPage, dir: 'prev' | 'next', origin: 
   return {
     query: page.query,
     walk: page.walk,
+    car: page.car,
     journeys: mergeJourneys(page.journeys, more),
     prev: dir === 'prev' ? data.previousPageCursor : page.prev,
     next: dir === 'next' ? data.nextPageCursor : page.next,

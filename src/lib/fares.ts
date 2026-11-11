@@ -20,30 +20,43 @@ const LITACKA_WEB = 'https://pid.cz/aplikace-pid-litacka/'
 export const CD_ESHOP = 'https://www.cd.cz/eshop/'
 
 type Platform = 'android' | 'ios' | 'other'
-const platform = (): Platform => {
+export const platform = (): Platform => {
   const ua = navigator.userAgent
   if (/android/i.test(ua)) return 'android'
   if (/iphone|ipad|ipod/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1)) return 'ios'
   return 'other'
 }
 
+export interface AppLink {
+  href: string
+  hint: string
+}
+
 /**
- * Otevře aplikaci PID Lítačka.
+ * Odkaz, který otevře mobilní aplikaci.
  * Android: intent spustí nainstalovanou aplikaci, jinak otevře Google Play.
- * iOS: Lítačka nemá veřejný odkaz do aplikace, otevře se App Store s tlačítkem „Otevřít“.
+ * iOS: bez veřejného odkazu do aplikace se otevře App Store s tlačítkem „Otevřít“.
+ * `direct` = odkaz přímo do aplikace (např. na stanici kol), když ho služba zveřejňuje.
  */
-export function litackaLink(): { href: string; hint: string } {
+export function appLink(androidPackage: string, iosStore: string, web: string, direct?: { android?: string; ios?: string; web?: string }): AppLink {
   switch (platform()) {
     case 'android':
+      if (direct?.android) return { href: direct.android, hint: 'Otevře aplikaci (nebo web, pokud ji nemáš).' }
       return {
-        href: `intent://#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${LITACKA_ANDROID};S.browser_fallback_url=${encodeURIComponent(`https://play.google.com/store/apps/details?id=${LITACKA_ANDROID}`)};end`,
-        hint: 'Otevře aplikaci PID Lítačka (nebo Google Play, pokud ji nemáš).',
+        href: `intent://#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${androidPackage};S.browser_fallback_url=${encodeURIComponent(`https://play.google.com/store/apps/details?id=${androidPackage}`)};end`,
+        hint: 'Otevře aplikaci (nebo Google Play, pokud ji nemáš).',
       }
     case 'ios':
-      return { href: LITACKA_IOS, hint: 'Otevře App Store – pokud Lítačku máš, klepni na „Otevřít“.' }
+      if (direct?.ios) return { href: direct.ios, hint: 'Otevře aplikaci (nebo web, pokud ji nemáš).' }
+      return { href: iosStore, hint: 'Otevře App Store – pokud aplikaci máš, klepni na „Otevřít“.' }
     default:
-      return { href: LITACKA_WEB, hint: 'Na počítači se otevře stránka aplikace PID Lítačka.' }
+      return { href: direct?.web ?? web, hint: 'Na počítači se otevře web služby.' }
   }
+}
+
+/** Otevře aplikaci PID Lítačka (konkrétní jízdenku předvybrat zvenčí nejde). */
+export function litackaLink(): AppLink {
+  return appLink(LITACKA_ANDROID, LITACKA_IOS, LITACKA_WEB)
 }
 
 /* ---------- ČD – odhad ---------- */

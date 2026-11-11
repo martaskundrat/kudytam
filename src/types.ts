@@ -96,4 +96,6 @@ export interface Settings {
   thresholdMin: number
   category: PassengerCategory
   coupons: Coupon[]
+  /** rozšířené vyhledávání: u nalezených spojení i sdílená kola a taxi */
+  extendedSearch: boolean
 }
