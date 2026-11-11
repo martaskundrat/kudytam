@@ -88,6 +88,19 @@ export async function linesAt(stopNames: Iterable<string>): Promise<Set<string>>
   return out
 }
 
+let codeIndex: Map<string, string> | null = null
+
+/** Označení nástupiště PID podle GTFS ID („U400Z1P“ → „A“); undefined = neznámé (např. vlakové zastávky PID). */
+export async function platformCodes(): Promise<(gtfsId: string) => string | undefined> {
+  if (!codeIndex) {
+    const idx = new Map<string, string>()
+    for (const st of await loadStations()) for (const [id, , , code] of st.platforms) if (code) idx.set(id, code)
+    codeIndex = idx
+  }
+  const idx = codeIndex
+  return (id) => idx.get(id)
+}
+
 let zoneIndex: Map<string, string[]> | null = null
 
 /** Pásma nástupiště podle GTFS ID (např. "U1040Z102P"); undefined = mimo PID / neznámé. */

@@ -1,4 +1,5 @@
 import { firstWalk, transitLegs, type Journey } from './journeys'
+import { better } from './rank'
 
 export interface JourneyPick {
   /** doporučení při hledání podle příjezdu: nejpozdější odjezd */
@@ -18,9 +19,8 @@ export interface JourneyPick {
 export function recommend(journeys: Journey[], nearRadius: number, now: number, arriveBy = false): JourneyPick | null {
   const live = journeys.filter((j) => j.start >= now - 30000 && !transitLegs(j).some((l) => l.cancelled))
   if (!live.length) return null
-  const best = arriveBy
-    ? live.reduce((a, b) => (b.start > a.start || (b.start === a.start && (b.end < a.end || (b.end === a.end && b.transfers < a.transfers))) ? b : a))
-    : live.reduce((a, b) => (b.end < a.end || (b.end === a.end && b.transfers < a.transfers) ? b : a))
+  // stejné pravidlo jako pro všechny varianty (rank.ts): v cíli nejdřív, při shodě nejzažší odjezd
+  const best = live.reduce((a, b) => (better({ ...b, key: b.id }, { ...a, key: a.id }, arriveBy) ? b : a))
   if (arriveBy) return { journey: best, farStop: false, savedMin: null, latest: true }
   // u sdíleného kola se počítá jen chůze ke stojanu
   const isNear = (j: Journey) => {

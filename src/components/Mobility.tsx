@@ -28,99 +28,99 @@ const ext = (href: string) => (href.startsWith('intent:') ? {} : { target: '_bla
 
 
 /** Sdílené kolo (živá data GBFS) – načte se samo pro dané odkud/kam. */
-export function BikeCards({
-  from,
-  to,
-  walkKmh,
-  settings,
-  now,
-  journeys,
-  when,
-}: {
-  from: LatLon
-  to: LatLon & { tz?: string }
-  walkKmh: number
-  settings: Settings
-  now: number
-  journeys: Journey[]
-  when?: When | null
-}) {
-  const [opts, setOpts] = useState<BikeOption[] | null>(null)
+/** Sdílené kolo na celou cestu (živá data GBFS) – obnovuje se s odjezdy, ne při každém tiku hodin. */
+export function useBikeOptions(from: LatLon | null, to: LatLon | null, walkKmh: number, settings: Settings, now: number): BikeOption[] {
+  const [opts, setOpts] = useState<{ key: string; o: BikeOption[] } | null>(null)
   const radius = settings.wideRadius
   const rider = { category: settings.category, coupons: settings.coupons }
-  const key = `${from.lat},${from.lon}|${to.lat},${to.lon}|${walkKmh}|${radius}|${rider.category}|${JSON.stringify(rider.coupons)}`
-  // obnov s odjezdy (volná kola se mění), ale ne při každém tiku hodin
+  const key = from && to ? `${from.lat},${from.lon}|${to.lat},${to.lon}|${walkKmh}|${radius}|${rider.category}|${JSON.stringify(rider.coupons)}` : ''
   const tick = Math.floor(now / 90000)
   useEffect(() => {
+    if (!from || !to) return
     let alive = true
     bikeOptions(from, to, walkKmh, radius, rider)
-      .then((o) => alive && setOpts(o))
-      .catch(() => alive && setOpts([]))
+      .then((o) => alive && setOpts({ key, o }))
+      .catch(() => alive && setOpts({ key, o: [] }))
     return () => {
       alive = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, tick])
+  return opts && opts.key === key ? opts.o : []
+}
 
-  if (!opts?.length) return null
+/** Kdy vyrazit a kdy dorazit sdíleným kolem na celou cestu (podle zvoleného času). */
+export const bikeTimes = (o: BikeOption, now: number, when?: When | null) => {
+  const leave = leaveAt(when, now, o.totalMin)
+  return { leave, arrival: leave + o.totalMin * 60000 }
+}
+
+/** Karta sdíleného kola na celou cestu. `best` = nejrychlejší varianta ze všech (je první v seznamu). */
+export function BikeCard({
+  o,
+  to,
+  now,
+  journeys,
+  when,
+  best = false,
+}: {
+  o: BikeOption
+  to: LatLon & { tz?: string }
+  now: number
+  journeys: Journey[]
+  when?: When | null
+  best?: boolean
+}) {
+  const { leave, arrival } = bikeTimes(o, now, when)
+  const later = leave - now > 20 * 60000
   return (
-    <>
-      {opts.map((o) => {
-        const leave = leaveAt(when, now, o.totalMin)
-        const arrival = leave + o.totalMin * 60000
-        const later = leave - now > 20 * 60000
-        const faster = arrival < bestTransitEnd(journeys, now)
-        return (
-          <div key={o.systemId} className={`rounded-2xl p-4 ${faster ? 'bg-gradient-to-br from-brand/25 to-surface ring-1 ring-brand' : 'bg-surface'}`}>
-            {faster && (
-              <div className="mb-2 flex items-center gap-1 text-[11px] font-bold tracking-wider text-brand uppercase">
-                <IconSparkle className="size-3.5" /> Na kole jsi tam dřív než MHD
-              </div>
-            )}
-            <div className="flex items-baseline justify-between gap-2">
-              <div className="flex items-center gap-2 text-xl font-extrabold">
-                <IconBike className="size-6" /> Sdílené kolo · {o.brand} {o.area}
-              </div>
-              <div className="shrink-0 font-bold text-muted">~{o.totalMin} min</div>
-            </div>
-            <p className="mt-1 text-sm">
-              {later && <>Vyraž v <b>{fmtWhen(leave, to.tz)}</b>, </>}V cíli kolem <b>{fmtTime(arrival, to.tz)}</b>
-              <Compare arrival={arrival} journeys={journeys} now={now} />
-            </p>
-            <ol className="mt-2 space-y-0.5 text-sm text-muted">
-              <li>
-                Pěšky {o.from.walkMin} min na stanici <span className="text-white">{o.from.name}</span>{' '}
-                <span className="text-brand">
-                  ({o.from.bikes} {o.from.bikes === 1 ? 'kolo' : o.from.bikes < 5 ? 'kola' : 'kol'})
-                </span>
-              </li>
-              <li>
-                Na kole ~{o.rideMin} min · {formatDistance(o.rideM)} na <span className="text-white">{o.to.name}</span>
-                <span className="text-subtle"> ({o.to.dockless ? 'parkovací místo, vrátíš kdykoli' : `${o.to.docks} volných stojanů`})</span>
-              </li>
-              {o.to.walkMin >= 1 && <li>Pěšky {o.to.walkMin} min do cíle</li>}
-            </ol>
-            <div className="mt-2 flex items-baseline justify-between gap-3">
-              <span className="text-xs text-subtle">
-                {o.price === 0 ? 'Jízda zdarma' : o.priceLabel ? `Ceník ${o.brand}: ${o.priceLabel}` : 'Cenu ukáže aplikace'}
-              </span>
-              {o.price !== null && <span className="shrink-0 text-xl font-black text-brand">{fmtKc(o.price)}</span>}
-            </div>
-            {o.freeNote && <p className="mt-1 text-xs text-brand">{o.freeNote}</p>}
-            <div className="mt-3 flex flex-wrap gap-2">
-              <a href={o.open.href} {...ext(o.open.href)} className={btn(true)}>
-                Půjčit v aplikaci {o.brand}
-              </a>
-              <NavButtons from={o.from} to={o.to} mode="bike" label="Navigovat na kole" />
-            </div>
-            <p className="mt-1 text-[11px] text-subtle">
-              {o.open.hint} Volná kola podle živých dat {o.brand}
-              {later ? ' – ověřená teď, do odjezdu se počet může změnit' : ''}, čas jízdy je odhad.
-            </p>
-          </div>
-        )
-      })}
-    </>
+    <div className={`rounded-2xl p-4 ${best ? 'bg-gradient-to-br from-brand/25 to-surface ring-1 ring-brand' : 'bg-surface'}`}>
+      {best && (
+        <div className="mb-2 flex items-center gap-1 text-[11px] font-bold tracking-wider text-brand uppercase">
+          <IconSparkle className="size-3.5" /> {when?.arriveBy ? 'Nejpozdější odjezd, se kterým to stihneš' : 'Nejrychlejší – na kole jsi tam nejdřív'}
+        </div>
+      )}
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="flex items-center gap-2 text-xl font-extrabold">
+          <IconBike className="size-6" /> Sdílené kolo · {o.brand} {o.area}
+        </div>
+        <div className="shrink-0 font-bold text-muted">~{o.totalMin} min</div>
+      </div>
+      <p className="mt-1 text-sm">
+        {later && <>Vyraž v <b>{fmtWhen(leave, to.tz)}</b>, </>}V cíli kolem <b>{fmtTime(arrival, to.tz)}</b>
+        <Compare arrival={arrival} journeys={journeys} now={now} />
+      </p>
+      <ol className="mt-2 space-y-0.5 text-sm text-muted">
+        <li>
+          Pěšky {o.from.walkMin} min na stanici <span className="text-white">{o.from.name}</span>{' '}
+          <span className="text-brand">
+            ({o.from.bikes} {o.from.bikes === 1 ? 'kolo' : o.from.bikes < 5 ? 'kola' : 'kol'})
+          </span>
+        </li>
+        <li>
+          Na kole ~{o.rideMin} min · {formatDistance(o.rideM)} na <span className="text-white">{o.to.name}</span>
+          <span className="text-subtle"> ({o.to.dockless ? 'parkovací místo, vrátíš kdykoli' : `${o.to.docks} volných stojanů`})</span>
+        </li>
+        {o.to.walkMin >= 1 && <li>Pěšky {o.to.walkMin} min do cíle</li>}
+      </ol>
+      <div className="mt-2 flex items-baseline justify-between gap-3">
+        <span className="text-xs text-subtle">
+          {o.price === 0 ? 'Jízda zdarma' : o.priceLabel ? `Ceník ${o.brand}: ${o.priceLabel}` : 'Cenu ukáže aplikace'}
+        </span>
+        {o.price !== null && <span className="shrink-0 text-xl font-black text-brand">{fmtKc(o.price)}</span>}
+      </div>
+      {o.freeNote && <p className="mt-1 text-xs text-brand">{o.freeNote}</p>}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <a href={o.open.href} {...ext(o.open.href)} className={btn(true)}>
+          Půjčit v aplikaci {o.brand}
+        </a>
+        <NavButtons from={o.from} to={o.to} mode="bike" label="Navigovat na kole" />
+      </div>
+      <p className="mt-1 text-[11px] text-subtle">
+        {o.open.hint} Volná kola podle živých dat {o.brand}
+        {later ? ' – ověřená teď, do odjezdu se počet může změnit' : ''}, čas jízdy je odhad.
+      </p>
+    </div>
   )
 }
 

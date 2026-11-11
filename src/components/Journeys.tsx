@@ -5,14 +5,14 @@ import { settingsStore, speedKmh, useStore } from '../lib/store'
 import { carrierQuote, legKey, quotable } from '../lib/carriers'
 import { fareOptions, type Quotes } from '../lib/fares'
 import { resolveIdos } from '../lib/geocode'
-import type { PassengerCategory } from '../types'
+import type { PassengerCategory, VehicleType } from '../types'
 import { FareComparison } from './FareComparison'
 import type { BikeOption } from '../lib/mobility'
 import { fmtWhen } from '../lib/time'
 import { NavButtons } from './NavButtons'
 import { recommend, type JourneyPick } from '../lib/recommend'
 export { recommend, type JourneyPick }
-import { fmtKc, fmtTime, IconBike, IconSparkle, IconWalk, LineBadge, Sheet, useNow, VEHICLE_LABEL } from './ui'
+import { fmtKc, fmtTime, platformLabel, IconBike, IconSparkle, IconWalk, LineBadge, Sheet, useNow, VEHICLE_LABEL } from './ui'
 
 /**
  * Živé ceny dopravců (FlixBus, RegioJet) pro úseky spojení. Dotazy se sdílejí v cache
@@ -109,7 +109,8 @@ export function JourneyCard({ j, now, pick, onSelect }: { j: Journey; now: numbe
         <span className={`font-semibold ${j.start - now < 120000 ? 'text-brand' : ''}`}>{leaveLabel(j, now)}</span>
         {firstTransit && (
           <span className="text-muted">
-            · {firstTransit.line} z {firstTransit.from.name} {fmtTime(firstTransit.from.time, firstTransit.from.tz)}
+            · {firstTransit.line} z {firstTransit.from.name}
+            {firstTransit.from.track ? ` (${platformLabel(firstTransit.from.track, firstTransit.vehicle)})` : ''} {fmtTime(firstTransit.from.time, firstTransit.from.tz)}
             {delay ? <span className="text-amber-400"> +{delay}</span> : null}
           </span>
         )}
@@ -268,7 +269,12 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
                   <IconWalk className="size-4" />
                   <span>
                     Pěšky {l.durationMin} min{l.meters > 0 && ` · ${formatDistance(l.meters)}`}
-                    {i === 0 && l.to.name ? ` na ${l.to.name}` : i === shown.legs.length - 1 ? ' do cíle' : ' (přestup)'}
+                    {i === shown.legs.length - 1 ? ' do cíle' : i === 0 && l.to.name ? ` na ${l.to.name}` : ' (přestup)'}
+                    {/* na které nástupiště jdeš (podle následujícího spoje) */}
+                    {(() => {
+                      const next = shown.legs[i + 1]
+                      return next?.kind === 'transit' && next.from.track ? ` · ${platformLabel(next.from.track, next.vehicle)}` : ''
+                    })()}
                   </span>
                 </div>
                 {/* navigace pěšky na zastávku / přestup / do cíle – kratší přechody (nástupiště) ne */}
@@ -466,12 +472,12 @@ function LegCard({
           <span className="font-bold tabular-nums">{fmtTime(l.from.time, l.from.tz)}</span>
           <span>
             {l.from.name}
-            {l.from.track && <span className="text-subtle"> · nást. {l.from.track}</span>}
+            {l.from.track && <span className="text-subtle"> · {platformLabel(l.from.track, l.vehicle)}</span>}
           </span>
           <span className="font-bold tabular-nums text-muted">{fmtTime(l.to.time, l.to.tz)}</span>
           <span className="text-muted">
             {l.to.name}
-            {l.to.track && <span className="text-subtle"> · nást. {l.to.track}</span>}
+            {l.to.track && <span className="text-subtle"> · {platformLabel(l.to.track, l.vehicle)}</span>}
           </span>
         </div>
         {l.cancelled && <p className="mt-2 text-sm font-semibold text-red-400">Spoj je zrušen.</p>}
@@ -480,7 +486,7 @@ function LegCard({
         {l.tripId && (
           <p className="mt-2 text-xs font-semibold text-muted">{showStops ? 'Skrýt zastávky ▴' : 'Všechny zastávky a poloha spoje ▾'}</p>
         )}
-        {showStops && l.tripId && <TripStops tripId={l.tripId} from={l.from.name} to={l.to.name} />}
+        {showStops && l.tripId && <TripStops tripId={l.tripId} from={l.from.name} to={l.to.name} vehicle={l.vehicle} />}
       </div>
     </li>
   )
@@ -490,7 +496,7 @@ function LegCard({
  * Celá trasa spoje: kde je teď, zpoždění, kam až jede.
  * Poloha se odvozuje z aktuálních (real-time) časů průjezdů zastávkami.
  */
-function TripStops({ tripId, from, to }: { tripId: string; from: string; to: string }) {
+function TripStops({ tripId, from, to, vehicle }: { tripId: string; from: string; to: string; vehicle: VehicleType }) {
   const [trip, setTrip] = useState<TripDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const now = useNow(15000)
@@ -574,7 +580,7 @@ function TripStops({ tripId, from, to }: { tripId: string; from: string; to: str
                 <span className={`min-w-11 shrink-0 tabular-nums ${mine ? 'font-bold' : ''}`}>{t ? fmtTime(t, s.tz) : ''}</span>
                 <span className={`min-w-0 flex-1 truncate ${i === iFrom || i === iTo ? 'font-bold' : ''}`}>
                   {s.name}
-                  {s.track && <span className="text-subtle"> · {s.track}</span>}
+                  {s.track && <span className="text-subtle"> · {platformLabel(s.track, vehicle)}</span>}
                   {i === iFrom && <span className="ml-1 text-xs text-brand">nástup</span>}
                   {i === iTo && <span className="ml-1 text-xs text-brand">výstup</span>}
                   {s.cancelled && <span className="ml-1 text-xs text-red-400">neobsluhuje se</span>}
@@ -612,9 +618,12 @@ export function WalkCard({
   journeys,
   mode = 'walk',
   when,
+  best = false,
 }: {
   walk: { durationMin: number; meters: number; estimated?: boolean }
   when?: When | null
+  /** nejrychlejší varianta ze všech (je první v seznamu) */
+  best?: boolean
   /** id způsobu přesunu z menu (chůze, běh, koloběžka, kolo…) */
   mode?: string
   from: { lat: number; lon: number }
@@ -628,12 +637,12 @@ export function WalkCard({
   const live = journeys.filter((j) => j.start >= now - 30000)
   const bestTransit = live.reduce<Journey | null>((a, b) => (!a || b.end < a.end ? b : a), null)
   const diff = bestTransit ? Math.round((bestTransit.end - arrival) / 60000) : null
-  const faster = diff === null || diff >= 0
   return (
-    <div className={`rounded-2xl p-4 ${faster ? 'bg-gradient-to-br from-brand/25 to-surface ring-1 ring-brand' : 'bg-surface'}`}>
-      {faster && (
+    <div className={`rounded-2xl p-4 ${best ? 'bg-gradient-to-br from-brand/25 to-surface ring-1 ring-brand' : 'bg-surface'}`}>
+      {best && (
         <div className="mb-2 flex items-center gap-1 text-[11px] font-bold tracking-wider text-brand uppercase">
-          <IconSparkle className="size-3.5" /> {diff === null ? `${label} to zvládneš` : `${label} jsi tam nejdřív`}
+          <IconSparkle className="size-3.5" />{' '}
+          {when?.arriveBy ? 'Nejpozdější odjezd, se kterým to stihneš' : diff === null ? `${label} to zvládneš` : `Nejrychlejší – ${label.toLowerCase()} jsi tam nejdřív`}
         </div>
       )}
       <div className="flex items-baseline justify-between gap-2">

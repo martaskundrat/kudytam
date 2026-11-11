@@ -59,6 +59,20 @@ Bez klíče aplikace běží na **demo datech** (smyšlené odjezdy).
 > Odjezdové tabule jiných regionů ČR (IDS JMK, ODIS…) nemají jednotné otevřené real-time API. Stačí ale napsat nového
 > poskytovatele podle rozhraní `TransitProvider` v `src/lib/transit/types.ts`. Spojení do cíle fungují v celé ČR už teď.
 
+## Pořadí výsledků: nejlepší varianta vždy první
+
+`src/lib/rank.ts`. Porovnávají se všechny varianty – spojení MHD/vlaky s chůzí i se sdíleným kolem, cesta pěšky
+a sdílené kolo na celou cestu. První je ta, se kterou jsi **v cíli nejdřív**, při shodě ta s **nejzažším odjezdem**
+(pak méně přestupů). Při hledání „Příjezd do…“ dorazí včas všechny, takže první je nejzažší odjezd, se kterým to stihneš
+(varianty, které do zvoleného času nedorazí, se nepočítají). **Taxi** se do pořadí nepočítá a nikdy není první.
+
+## Nástupiště a koleje
+
+U spojů se ukazuje nástupiště / stanoviště (`nást. B`) a u vlaků kolej (`kolej 32b`) – v přehledu karty, v úsecích,
+u pěších úseků (na které nástupiště jdeš) a v zastávkách trasy spoje. Bere se z Transitous (`track`); u zastávek PID,
+kde chybí, z označení nástupiště v data.pid.cz podle GTFS ID (`platformCodes` v `stations.ts`, např. metro „M2A“).
+Některá data nástupiště nemají (FlixBus, vlakové zastávky PID v datech PID) – pak se neukazuje.
+
 ## Spojení do cíle (s přestupy)
 
 `src/lib/journeys.ts` + `src/components/Journeys.tsx`

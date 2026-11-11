@@ -176,6 +176,9 @@ export function useNow(intervalMs = 10000) {
 }
 
 export { fmtTime }
+
+/** „kolej 2“ u vlaků, jinak „nást. B“ (nástupiště / stanoviště v rámci stanice) */
+export const platformLabel = (track: string, vehicle?: VehicleType) => (vehicle === 'train' ? `kolej ${track}` : `nást. ${track}`)
 export const fmtKc = (n: number) => `${n.toLocaleString('cs-CZ')} Kč`
 
 export function minutesLabel(ms: number, now: number) {

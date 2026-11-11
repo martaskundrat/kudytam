@@ -8,7 +8,7 @@
 import type { LatLon, Place, Settings, VehicleType } from '../types'
 import { distanceM, inCzechia, travelMinutes } from './geo'
 import { bikeAreaAt, bikeFromStop, bikesNear, bikeToStop, type BikeOption } from './mobility'
-import { platformZones, zonesNear } from './stations'
+import { platformCodes, platformZones, zonesNear } from './stations'
 
 export interface LegStop {
   name: string
@@ -177,11 +177,14 @@ export function mergeJourneys(...lists: Journey[][]): Journey[] {
 async function parse(data: any, origin: LatLon & { name?: string }, dest: Place): Promise<Journey[]> {
   const zonesOf = await platformZones()
   const zonesAt = await zonesNear()
+  // nástupiště PID tam, kde ho Transitous neposlal (podle GTFS ID z data.pid.cz)
+  const codeOf = await platformCodes().catch(() => () => undefined)
 
   const journeys: Journey[] = (data.itineraries ?? []).map((it: any, i: number): Journey => {
     const legs: Leg[] = (it.legs ?? []).map((l: any): Leg => {
       const from = stopOf(l.from, 'departure')
       const to = stopOf(l.to, 'arrival')
+      for (const s of [from, to]) if (!s.track && s.gtfsId) s.track = codeOf(s.gtfsId)
       const durationMin = Math.round((l.duration ?? (to.time - from.time) / 1000) / 60)
       if (l.mode === 'WALK' || l.mode === 'BIKE' || l.mode === 'CAR') {
         return { kind: 'walk', from, to, durationMin, meters: Math.round(l.distance ?? 0), viaBike: l.mode === 'BIKE' || undefined }

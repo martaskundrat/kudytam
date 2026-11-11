@@ -2,13 +2,14 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { RecommendationCard, StopCard } from './components/Departures'
 import { JourneyCard, JourneySheet, recommend, WalkCard } from './components/Journeys'
 import { Menu } from './components/Menu'
-import { BikeCards, TaxiCard } from './components/Mobility'
+import { BikeCard, bikeTimes, TaxiCard, useBikeOptions } from './components/Mobility'
 import { RideSheet } from './components/RideSheet'
 import { StationPicker } from './components/StationPicker'
 import { whenLabel, WhenPicker } from './components/WhenPicker'
 import { Button, IconBike, IconBus, IconCar, IconFlag, IconHome, IconMenu, IconPin, IconRefresh, IconSwap, useNow } from './components/ui'
 import { distanceM, getPosition, travelMinutes } from './lib/geo'
-import { MAX_WALK_MIN, mergeJourneys, morePage, planJourneys, type Journey, type JourneyPage, type When } from './lib/journeys'
+import { leaveAt, MAX_WALK_MIN, mergeJourneys, morePage, planJourneys, transitLegs, type Journey, type JourneyPage, type When } from './lib/journeys'
+import { bestOf, type RankItem } from './lib/rank'
 import { plan, type PlanResult } from './lib/planner'
 import { settingsStore, speedKmh, useStore } from './lib/store'
 import { getProvider, type TransitProvider } from './lib/transit'
@@ -177,7 +178,28 @@ export default function App() {
     now + walkCandidate.durationMin * 60000 <= fastestTransitEnd + WALK_SLACK_MIN * 60000
   const walkOption = dest && routeOrigin && walkCandidate && ((airToDest ?? Infinity) <= settings.wideRadius || walkCompetitive) ? walkCandidate : null
 
-  const pick = journeys ? recommend(journeys, settings.nearRadius, now, !!when?.arriveBy) : null
+  const arriveBy = !!when?.arriveBy
+  const bikeOpts = useBikeOptions(settings.extendedSearch !== false && dest && routeOrigin ? routeOrigin : null, dest, Math.min(kmh, 6.5), settings, now)
+
+  // Nejlepší varianta ze všech je vždy první: v cíli nejdřív, při shodě nejzažší odjezd
+  // (při hledání podle příjezdu nejzažší odjezd, se kterým to stihneš) – viz lib/rank.ts. Taxi se nepočítá.
+  const walkStart = walkOption ? leaveAt(when, now, walkOption.durationMin) : 0
+  const rankItems: RankItem[] = [
+    ...(journeys ?? [])
+      .filter((j) => j.start >= now - 30000 && !transitLegs(j).some((l) => l.cancelled))
+      .map((j) => ({ key: `j:${j.id}`, start: j.start, end: j.end, transfers: j.transfers })),
+    ...(walkOption ? [{ key: 'walk', start: walkStart, end: walkStart + walkOption.durationMin * 60000, transfers: 0 }] : []),
+    ...bikeOpts.map((o) => {
+      const t = bikeTimes(o, now, when)
+      return { key: `bike:${o.systemId}`, start: t.leave, end: t.arrival, transfers: 0 }
+    }),
+  ]
+  const bestKey = bestOf(rankItems, arriveBy, arriveBy ? when!.at : undefined)?.key ?? null
+  const bestJourney = bestKey?.startsWith('j:') ? (journeys?.find((j) => `j:${j.id}` === bestKey) ?? null) : null
+  const bestBike = bestKey?.startsWith('bike:') ? (bikeOpts.find((o) => `bike:${o.systemId}` === bestKey) ?? null) : null
+  // doporučení u karty spojení jen tehdy, když je nejlepší variantou spojení (s údajem o vzdálenější zastávce)
+  const rec = journeys ? recommend(journeys, settings.nearRadius, now, arriveBy) : null
+  const pick = bestJourney ? (rec?.journey.id === bestJourney.id ? rec : { journey: bestJourney, farStop: false, savedMin: null, latest: arriveBy }) : null
 
   /** Dřívější / pozdější spojení v seznamu (další stránka výsledků Transitous). */
   const loadMore = async (dir: 'prev' | 'next') => {
@@ -338,7 +360,14 @@ export default function App() {
               </p>
             )}
 
-            {walkOption && routeOrigin && (
+            {/* nejlepší varianta vždy první (taxi nikdy) */}
+            {bestKey === 'walk' && walkOption && routeOrigin && (
+              <WalkCard walk={walkOption} from={routeOrigin} to={dest} now={now} journeys={journeys} mode={settings.travelModeId} when={when} best />
+            )}
+            {bestBike && <BikeCard o={bestBike} to={dest} now={now} journeys={journeys} when={when} best />}
+            {bestJourney && <JourneyCard j={bestJourney} now={now} pick={pick} onSelect={(j) => setSelectedId(j.id)} />}
+
+            {bestKey !== 'walk' && walkOption && routeOrigin && (
               <WalkCard walk={walkOption} from={routeOrigin} to={dest} now={now} journeys={journeys} mode={settings.travelModeId} when={when} />
             )}
 
@@ -354,7 +383,7 @@ export default function App() {
                   {loadingMore ? 'Načítám…' : dir === 'prev' ? 'Dřívější spojení' : 'Pozdější spojení'}
                 </button>
               )
-              const list = journeys.filter((j) => j.start >= now - 30000)
+              const list = journeys.filter((j) => j.start >= now - 30000 && j.id !== bestJourney?.id)
               if (when?.arriveBy) list.reverse()
               return i === 0 ? (
                 <Fragment key="list">
@@ -376,7 +405,11 @@ export default function App() {
 
             {extended && routeOrigin && (
               <>
-                <BikeCards from={routeOrigin} to={dest} walkKmh={Math.min(kmh, 6.5)} settings={settings} now={now} journeys={journeys} when={when} />
+                {bikeOpts
+                  .filter((o) => o !== bestBike)
+                  .map((o) => (
+                    <BikeCard key={o.systemId} o={o} to={dest} now={now} journeys={journeys} when={when} />
+                  ))}
                 {page?.car && <TaxiCard car={page.car} from={originRef.current ?? routeOrigin} to={dest} now={now} journeys={journeys} when={when} />}
               </>
             )}
