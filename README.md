@@ -2,7 +2,8 @@
 
 React + Vite + Tailwind CSS v4, dark mode, Spotify zelená (`#1DB954`). Instalovatelná PWA s offline cache.
 
-**Pokrytí:** spojení s přestupy, jízdné u dopravců a sdílená kola fungují **v celé ČR** (všechny zastávky z celostátních
+**Pokrytí:** spojení s přestupy fungují **v ČR, v Evropě i ve světě** (kde má [Transitous](https://transitous.org/sources/) data),
+jízdné u dopravců a sdílená kola **v celé ČR** (všechny zastávky z celostátních
 jízdních řádů přes Transitous). Odjezdové tabule v okolí bez zadaného cíle jsou zatím jen pro **PID** (Praha a Středočeský kraj),
 protože real-time odjezdy jiných regionů nemají jednotné otevřené API.
 
@@ -134,7 +135,26 @@ Cesta pěšky, sdíleným kolem a taxi se počítá od zvoleného odjezdu, nebo 
 (`leaveAt` v `journeys.ts`). Volná kola u cesty víc než 20 min dopředu jsou jen ověřená teď – aplikace na to upozorní.
 Uplynulý čas se při hledání vrátí na „Teď“. Odjezdy v okolí (bez cíle) jsou vždy aktuální.
 
-## Odkud a kam: zastávka v ČR, adresa nebo GPS
+## Hledání v ČR, v Evropě a ve světě
+
+Ve vyhledávání Odkud/Kam je přepínač **ČR / Evropa / Svět** (pamatuje se, `searchScope`). Platí pro zastávky, adresy i GPS
+(Transitous /geocode, výsledky filtrované podle státu; v zahraničí se ve výsledku ukáže i kód státu).
+V ČR se zastávky berou jen z českých jízdních řádů, aby se nepletly duplikáty z cizích dat.
+
+V zahraničí (podle zjednodušeného obrysu hranic ČR, `inCzechia` v `geo.ts`):
+- **jízdenky bez odhadu ceny** – tlačítko vede na e-shop dopravce: odkaz z jízdních řádů (`agency_fare_url`, `agency_url`),
+  jinak seznam velkých dopravců v `carriers.ts` (DB, ÖBB, SNCF, MÁV, PKP Intercity, Trenitalia, Italo, Renfe, SBB, SNCB,
+  NS International, Eurostar, Amtrak…), jinak „Najít jízdenku“ (Google). Stanice se při otevření e-shopu zkopírují do schránky.
+  Živé ceny FlixBusu a RegioJetu zůstávají (nejsou to odhady). Odhad ceny ČD jen pro úseky celé v ČR; IDOS jen v ČR.
+- **taxi** bez odhadu ceny a bez Liftaga (jezdí jen v ČR),
+- **navigace**: vždy Mapy.com, v zahraničí navíc **Google Maps** (`NavButtons`, Google Maps URLs `/maps/dir/?api=1`).
+
+**Časy v místním pásmu** (`src/lib/time.ts`): Transitous posílá u zastávek i míst pásmo (IANA, např. `Asia/Tokyo`).
+Odjezd se ukazuje v pásmu místa odjezdu, příjezd v pásmu cíle; když se liší od pásma telefonu, v závorce je i čas
+podle telefonu – „23:38 (15:38)“. Zvolený odjezd / příjezd se zadává v místním čase místa odjezdu / cíle.
+Ceny FlixBusu a RegioJetu se hledají podle místního data odjezdu.
+
+## Odkud a kam: zastávka, adresa nebo GPS
 
 V kolonkách **Odkud** i **Kam** (a u domova) jde zadat stanici PID, zastávku nebo nádraží kdekoli v ČR (Transitous /geocode,
 jen české jízdní řády), adresu (OpenStreetMap) nebo GPS souřadnice:

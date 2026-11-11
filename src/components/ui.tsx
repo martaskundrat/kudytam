@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode, type TouchEvent } from 'react'
+import { fmtTime } from '../lib/time'
 import type { Departure, VehicleType } from '../types'
 
 /* ---------- ikony (inline SVG, bez závislostí) ---------- */
@@ -174,7 +175,7 @@ export function useNow(intervalMs = 10000) {
   return now
 }
 
-export const fmtTime = (ms: number) => new Date(ms).toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })
+export { fmtTime }
 export const fmtKc = (n: number) => `${n.toLocaleString('cs-CZ')} Kč`
 
 export function minutesLabel(ms: number, now: number) {

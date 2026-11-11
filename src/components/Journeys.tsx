@@ -8,6 +8,8 @@ import { resolveIdos } from '../lib/geocode'
 import type { PassengerCategory } from '../types'
 import { FareComparison } from './FareComparison'
 import type { BikeOption } from '../lib/mobility'
+import { fmtWhen } from '../lib/time'
+import { NavButtons } from './NavButtons'
 import { fmtKc, fmtTime, IconBike, IconSparkle, IconWalk, LineBadge, Sheet, useNow, VEHICLE_LABEL } from './ui'
 
 export interface JourneyPick {
@@ -60,15 +62,12 @@ function useQuotes(j: Journey | null, category: PassengerCategory, withIdos = fa
   return quotes?.key === key ? quotes.q : undefined
 }
 
-/** čas, u jiného dne i s datem („st 12. 11. 7:30“) */
-export const fmtWhen = (t: number) =>
-  new Date(t).toDateString() === new Date().toDateString()
-    ? fmtTime(t)
-    : `${new Date(t).toLocaleDateString('cs-CZ', { weekday: 'short', day: 'numeric', month: 'numeric' })} ${fmtTime(t)}`
+/** časová pásma začátku a konce spojení (odjezd v pásmu startu, příjezd v pásmu cíle) */
+const tzOf = (j: Journey) => ({ start: j.legs[0]?.from.tz, end: j.legs[j.legs.length - 1]?.to.tz })
 
 const leaveLabel = (j: Journey, now: number) => {
   const m = Math.floor((j.start - now) / 60000)
-  return m <= 0 ? 'Vyraž hned' : m < 60 ? `Vyraž za ${m} min` : `Vyraž v ${fmtWhen(j.start)}`
+  return m <= 0 ? 'Vyraž hned' : m < 60 ? `Vyraž za ${m} min` : `Vyraž v ${fmtWhen(j.start, tzOf(j).start)}`
 }
 
 function LegChips({ j }: { j: Journey }) {
@@ -122,7 +121,7 @@ export function JourneyCard({ j, now, pick, onSelect }: { j: Journey; now: numbe
       )}
       <div className="flex items-baseline justify-between gap-2">
         <div className="text-xl font-extrabold tabular-nums">
-          {fmtTime(j.start)} <span className="text-subtle">→</span> {fmtTime(j.end)}
+          {fmtTime(j.start, tzOf(j).start)} <span className="text-subtle">→</span> {fmtTime(j.end, tzOf(j).end)}
         </div>
         <div className="font-bold text-muted">{j.durationMin} min</div>
       </div>
@@ -133,7 +132,7 @@ export function JourneyCard({ j, now, pick, onSelect }: { j: Journey; now: numbe
         <span className={`font-semibold ${j.start - now < 120000 ? 'text-brand' : ''}`}>{leaveLabel(j, now)}</span>
         {firstTransit && (
           <span className="text-muted">
-            · {firstTransit.line} z {firstTransit.from.name} {fmtTime(firstTransit.from.time)}
+            · {firstTransit.line} z {firstTransit.from.name} {fmtTime(firstTransit.from.time, firstTransit.from.tz)}
             {delay ? <span className="text-amber-400"> +{delay}</span> : null}
           </span>
         )}
@@ -143,8 +142,10 @@ export function JourneyCard({ j, now, pick, onSelect }: { j: Journey; now: numbe
         <span>
           {!cheapest
             ? ''
-            : cheapest.total === 0 && !cheapest.incomplete
-              ? 'jízdenka není potřeba'
+            : cheapest.total === 0
+              ? cheapest.incomplete
+                ? 'cena u dopravce'
+                : 'jízdenka není potřeba'
               : `od ${cheapest.estimated ? '~' : ''}${fmtKc(cheapest.total)}${cheapest.incomplete ? ' +' : ''}`}
         </span>
       </div>
@@ -261,7 +262,7 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
 
       <div className="flex items-baseline justify-between pb-1">
         <div className="text-2xl font-black tabular-nums">
-          {fmtTime(shown.start)} → {fmtTime(shown.end)}
+          {fmtTime(shown.start, tzOf(shown).start)} → {fmtTime(shown.end, tzOf(shown).end)}
         </div>
         <div className="font-bold text-muted">{shown.durationMin} min</div>
       </div>
@@ -317,9 +318,6 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
 const bikesLabel = (n: number) => `${n} ${n === 1 ? 'kolo' : n < 5 ? 'kola' : 'kol'}`
 
 function BikeLegRow({ bike, stop, atEnd, later }: { bike: BikeOption; stop: string; atEnd: boolean; later: boolean }) {
-  const nav =
-    'https://mapy.com/fnc/v1/route?' +
-    new URLSearchParams({ mapset: 'outdoor', start: `${bike.from.lon},${bike.from.lat}`, end: `${bike.to.lon},${bike.to.lat}`, routeType: 'bike_road', navigate: 'true' })
   return (
     <li className="rounded-2xl bg-surface p-3 text-sm">
       <div className="flex items-center gap-2 font-semibold">
@@ -370,9 +368,7 @@ function BikeLegRow({ bike, stop, atEnd, later }: { bike: BikeOption; stop: stri
         >
           Půjčit v aplikaci {bike.brand}
         </a>
-        <a href={nav} target="_blank" rel="noreferrer" className="rounded-full px-4 py-2 text-sm font-bold ring-1 ring-zinc-500 transition hover:ring-white active:scale-95">
-          Navigovat na kole
-        </a>
+        <NavButtons from={bike.from} to={bike.to} mode="bike" label="Navigovat na kole" />
       </div>
     </li>
   )
@@ -474,12 +470,12 @@ function LegCard({
           )}
         </div>
         <div className="mt-3 grid grid-cols-[3rem_1fr] gap-x-2 gap-y-1.5 text-sm">
-          <span className="font-bold tabular-nums">{fmtTime(l.from.time)}</span>
+          <span className="font-bold tabular-nums">{fmtTime(l.from.time, l.from.tz)}</span>
           <span>
             {l.from.name}
             {l.from.track && <span className="text-subtle"> · nást. {l.from.track}</span>}
           </span>
-          <span className="font-bold tabular-nums text-muted">{fmtTime(l.to.time)}</span>
+          <span className="font-bold tabular-nums text-muted">{fmtTime(l.to.time, l.to.tz)}</span>
           <span className="text-muted">
             {l.to.name}
             {l.to.track && <span className="text-subtle"> · nást. {l.to.track}</span>}
@@ -582,7 +578,7 @@ function TripStops({ tripId, from, to }: { tripId: string; from: string; to: str
                 <span className="absolute -bottom-1.5 -left-[6px] z-10 size-2.5 animate-pulse rounded-full bg-brand" />
               )}
               <div className="flex items-baseline gap-2">
-                <span className={`w-11 shrink-0 tabular-nums ${mine ? 'font-bold' : ''}`}>{t ? fmtTime(t) : ''}</span>
+                <span className={`min-w-11 shrink-0 tabular-nums ${mine ? 'font-bold' : ''}`}>{t ? fmtTime(t, s.tz) : ''}</span>
                 <span className={`min-w-0 flex-1 truncate ${i === iFrom || i === iTo ? 'font-bold' : ''}`}>
                   {s.name}
                   {s.track && <span className="text-subtle"> · {s.track}</span>}
@@ -629,7 +625,7 @@ export function WalkCard({
   /** id způsobu přesunu z menu (chůze, běh, koloběžka, kolo…) */
   mode?: string
   from: { lat: number; lon: number }
-  to: { lat: number; lon: number; name: string }
+  to: { lat: number; lon: number; name: string; tz?: string }
   now: number
   journeys: Journey[]
 }) {
@@ -640,18 +636,6 @@ export function WalkCard({
   const bestTransit = live.reduce<Journey | null>((a, b) => (!a || b.end < a.end ? b : a), null)
   const diff = bestTransit ? Math.round((bestTransit.end - arrival) / 60000) : null
   const faster = diff === null || diff >= 0
-  // Mapy.com URL API (https://developer.mapy.com/further-uses-of-mapycz/mapy-cz-url/):
-  // v telefonu otevře aplikaci Mapy.com (není-li nainstalovaná, web); navigate=true rovnou spustí
-  // navigaci (aplikace od dubna 2024). Souřadnice jsou v pořadí lon,lat.
-  const nav =
-    'https://mapy.com/fnc/v1/route?' +
-    new URLSearchParams({
-      mapset: 'outdoor',
-      start: `${from.lon},${from.lat}`,
-      end: `${to.lon},${to.lat}`,
-      routeType: mode === 'bike' || mode === 'scooter' ? 'bike_road' : 'foot_fast',
-      navigate: 'true',
-    })
   return (
     <div className={`rounded-2xl p-4 ${faster ? 'bg-gradient-to-br from-brand/25 to-surface ring-1 ring-brand' : 'bg-surface'}`}>
       {faster && (
@@ -669,21 +653,16 @@ export function WalkCard({
         </div>
       </div>
       <p className="mt-1 text-sm">
-        {leave - now < 60000 ? 'Vyraž hned' : <>Vyraž v <b>{fmtWhen(leave)}</b></>} a v cíli budeš v <b>{fmtTime(arrival)}</b>
+        {leave - now < 60000 ? 'Vyraž hned' : <>Vyraž v <b>{fmtWhen(leave, to.tz)}</b></>} a v cíli budeš v <b>{fmtTime(arrival, to.tz)}</b>
         {diff !== null && diff !== 0 && (
           <span className="text-muted"> · {diff > 0 ? `o ${diff} min dřív` : `o ${-diff} min později`} než nejrychlejší MHD</span>
         )}
         {diff === 0 && <span className="text-muted"> · stejně jako MHD</span>}
       </p>
       <p className="mt-0.5 text-xs text-subtle">Bez jízdenky{walk.estimated ? ' · délka cesty odhadnutá' : ''}.</p>
-      <a
-        href={nav}
-        target="_blank"
-        rel="noreferrer"
-        className="mt-3 inline-block rounded-full bg-brand px-4 py-2 text-sm font-bold text-black transition hover:bg-brand-hover active:scale-95"
-      >
-        Navigovat ({label.toLowerCase()})
-      </a>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <NavButtons from={from} to={to} mode={mode === 'bike' || mode === 'scooter' ? 'bike' : 'foot'} label={`Navigovat (${label.toLowerCase()})`} primary />
+      </div>
     </div>
   )
 }

@@ -13,7 +13,7 @@
  */
 import { NEXTBIKE_CZ } from './bike-systems'
 import { appLink, type AppLink } from './fares'
-import { distanceM, travelMinutes } from './geo'
+import { distanceM, inCzechia, travelMinutes } from './geo'
 import { isCouponActive } from './tickets'
 import type { Coupon, LatLon, PassengerCategory } from '../types'
 
@@ -397,8 +397,9 @@ export interface TaxiOption {
   durationMin: number
   meters: number
   arrival: number
-  priceLow: number
-  priceHigh: number
+  /** orientační cena jen v ČR (podle pražského cenového výměru); v zahraničí null */
+  priceLow: number | null
+  priceHigh: number | null
   services: TaxiService[]
 }
 
@@ -421,6 +422,7 @@ export function taxiOption(
   now: number,
 ): TaxiOption | null {
   if (car.meters < MIN_TAXI_M) return null
+  const domestic = inCzechia(from) && inCzechia(to)
   const { low, high } = taxiPrice(car.meters)
   const uber =
     'https://m.uber.com/ul/?' +
@@ -437,8 +439,8 @@ export function taxiOption(
     durationMin: car.durationMin,
     meters: car.meters,
     arrival: now + (TAXI_PICKUP_MIN + car.durationMin) * 60000,
-    priceLow: low,
-    priceHigh: high,
+    priceLow: domestic ? low : null,
+    priceHigh: domestic ? high : null,
     services: [
       { id: 'uber', name: 'Uber', prefilled: true, link: { href: uber, hint: 'Otevře Uber s předvyplněným nástupem a cílem.' } },
       {
@@ -447,12 +449,17 @@ export function taxiOption(
         prefilled: false,
         link: appLink('ee.mtakso.client', 'https://apps.apple.com/cz/app/bolt/id675033630', 'https://bolt.eu/cs-cz/rides/'),
       },
-      {
-        id: 'liftago',
-        name: 'Liftago',
-        prefilled: false,
-        link: appLink('com.adleritech.app.liftago.passenger', 'https://apps.apple.com/cz/app/liftago/id633928711', 'https://www.liftago.cz/'),
-      },
+      // Liftago jezdí jen v ČR
+      ...(domestic
+        ? [
+            {
+              id: 'liftago' as const,
+              name: 'Liftago',
+              prefilled: false,
+              link: appLink('com.adleritech.app.liftago.passenger', 'https://apps.apple.com/cz/app/liftago/id633928711', 'https://www.liftago.cz/'),
+            },
+          ]
+        : []),
     ],
   }
 }

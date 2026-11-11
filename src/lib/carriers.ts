@@ -14,7 +14,8 @@ import { distanceM } from './geo'
 import type { TransitLeg } from './journeys'
 import type { PassengerCategory } from '../types'
 
-export type CarrierId = 'flixbus' | 'regiojet' | 'leo' | 'arriva' | 'zssk' | 'other'
+/** flixbus, regiojet a další známí dopravci; 'other' = ostatní */
+export type CarrierId = string
 
 export interface Carrier {
   id: CarrierId
@@ -28,6 +29,23 @@ const KNOWN: { id: CarrierId; name: string; re: RegExp; web: string }[] = [
   { id: 'leo', name: 'Leo Express', re: /leo ?express/i, web: 'https://www.leoexpress.com/cs' },
   { id: 'arriva', name: 'Arriva', re: /arriva/i, web: 'https://arriva.cz/' },
   { id: 'zssk', name: 'ZSSK', re: /železničná spoločnosť slovensko|zssk/i, web: 'https://www.zssk.sk/' },
+  // mezinárodní úseky ČD (vnitrostátní ČD řeší odhad ceny v fares.ts)
+  { id: 'cd', name: 'České dráhy', re: /(č|c)esk(é|e) dr(á|a)hy/i, web: 'https://www.cd.cz/eshop/' },
+  // velcí evropští dopravci – v datech často chybí odkaz na e-shop
+  { id: 'db', name: 'Deutsche Bahn', re: /\bDB\b|deutsche bahn/i, web: 'https://www.bahn.de/' },
+  { id: 'oebb', name: 'ÖBB', re: /ÖBB|österreichische bundesbahnen/i, web: 'https://shop.oebbtickets.at/' },
+  { id: 'westbahn', name: 'WESTbahn', re: /westbahn/i, web: 'https://westbahn.at/' },
+  { id: 'sncf', name: 'SNCF', re: /\bSNCF\b|ouigo/i, web: 'https://www.sncf-connect.com/' },
+  { id: 'mav', name: 'MÁV', re: /\bMÁV\b/i, web: 'https://jegy.mav.hu/' },
+  { id: 'pkp', name: 'PKP Intercity', re: /pkp intercity|\bPKP\b/i, web: 'https://www.intercity.pl/' },
+  { id: 'trenitalia', name: 'Trenitalia', re: /trenitalia/i, web: 'https://www.trenitalia.com/' },
+  { id: 'italo', name: 'Italo', re: /\bitalo\b|nuovo trasporto viaggiatori/i, web: 'https://www.italotreno.com/' },
+  { id: 'renfe', name: 'Renfe', re: /renfe/i, web: 'https://www.renfe.com/' },
+  { id: 'sbb', name: 'SBB', re: /\bSBB\b|schweizerische bundesbahnen/i, web: 'https://www.sbb.ch/' },
+  { id: 'sncb', name: 'SNCB', re: /\bSNCB\b|\bNMBS\b/i, web: 'https://www.belgiantrain.be/' },
+  { id: 'ns', name: 'NS International', re: /nederlandse spoorwegen|NS international/i, web: 'https://www.nsinternational.com/' },
+  { id: 'eurostar', name: 'Eurostar', re: /eurostar|thalys/i, web: 'https://www.eurostar.com/' },
+  { id: 'amtrak', name: 'Amtrak', re: /amtrak/i, web: 'https://www.amtrak.com/' },
 ]
 
 /** odkaz z dat jízdních řádů, který opravdu vede na web dopravce */
@@ -40,7 +58,7 @@ export function carrierOf(l: TransitLeg): Carrier {
   const text = `${l.agency} ${l.agencyId ?? ''} ${l.from.stopId ?? ''}`
   const k = KNOWN.find((c) => c.re.test(text))
   if (k) return { id: k.id, name: k.name, web: k.web }
-  return { id: 'other', name: cleanName(l.agency) || 'dopravce', web: validWeb(l.agencyUrl) }
+  return { id: 'other', name: cleanName(l.agency) || 'dopravce', web: validWeb(l.agencyFareUrl) ?? validWeb(l.agencyUrl) }
 }
 
 export interface CarrierQuote {
@@ -55,11 +73,11 @@ export interface CarrierQuote {
 /** klíč úseku pro předání cen do výpočtu jízdného */
 export const legKey = (l: TransitLeg) => `${l.tripId ?? l.line}@${l.from.scheduled}@${l.to.name}`
 
-/** místní datum YYYY-MM-DD */
-const isoDate = (t: number) => new Date(t).toLocaleDateString('sv-SE')
-const czDate = (t: number) => {
-  const d = new Date(t)
-  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`
+/** místní datum odjezdu YYYY-MM-DD v pásmu stanice (u nočních spojů v zahraničí se liší od data v telefonu) */
+const isoDate = (t: number, tz?: string) => new Date(t).toLocaleDateString('sv-SE', tz ? { timeZone: tz } : {})
+const czDate = (t: number, tz?: string) => {
+  const [y, m, d] = isoDate(t, tz).split('-')
+  return `${d}.${m}.${y}`
 }
 /** stejný spoj: odjezd do 2 min od plánovaného */
 const sameTime = (a: number, b: number) => Math.abs(a - b) <= 2 * 60000
@@ -90,7 +108,7 @@ async function flixQuote(l: TransitLeg): Promise<CarrierQuote | null> {
   const from = flixStation(l.from.stopId)
   const to = flixStation(l.to.stopId)
   if (!from || !to) return null
-  const date = czDate(l.from.scheduled)
+  const date = czDate(l.from.scheduled, l.from.tz)
   const q = new URLSearchParams({
     from_station_id: from,
     to_station_id: to,
@@ -203,7 +221,7 @@ async function regiojetQuote(l: TransitLeg, category: PassengerCategory): Promis
     fromLocationType: 'STATION',
     toLocationId: String(b.id),
     toLocationType: 'STATION',
-    departureDate: isoDate(l.from.scheduled),
+    departureDate: isoDate(l.from.scheduled, l.from.tz),
     tariffs: tariff,
   }
   const q = new URLSearchParams(params)

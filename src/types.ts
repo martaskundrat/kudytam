@@ -10,6 +10,8 @@ export interface Place extends LatLon {
   stopName?: string
   zones?: string[]
   types?: string[]
+  /** časové pásmo místa (IANA, např. „Asia/Tokyo“) – u míst z vyhledávání Transitous */
+  tz?: string
 }
 
 export interface Stop extends LatLon {
@@ -98,4 +100,8 @@ export interface Settings {
   coupons: Coupon[]
   /** rozšířené vyhledávání: u nalezených spojení i sdílená kola a taxi */
   extendedSearch: boolean
+  /** kde hledat zastávky a adresy (Odkud/Kam) */
+  searchScope: SearchScope
 }
+
+export type SearchScope = 'cz' | 'europe' | 'world'

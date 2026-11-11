@@ -1,8 +1,16 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { formatCoords, parseCoordinates, reverseGeocode, searchAddresses } from '../lib/geocode'
 import { loadStations, searchStations } from '../lib/stations'
-import type { LatLon, Place } from '../types'
+import { settingsStore, useStore } from '../lib/store'
+import type { LatLon, Place, SearchScope } from '../types'
 import { IconClose, IconPin } from './ui'
+
+const SCOPES: [SearchScope, string][] = [
+  ['cz', 'ČR'],
+  ['europe', 'Evropa'],
+  ['world', 'Svět'],
+]
+const SCOPE_TEXT: Record<SearchScope, string> = { cz: 'kdekoli v ČR', europe: 'kdekoli v Evropě', world: 'kdekoli na světě' }
 
 const TYPE_ICON: Record<string, string> = { metro: 'Ⓜ️', tram: '🚋', bus: '🚌', train: '🚆', trolleybus: '🚎', ferry: '⛴️', funicular: '🚠' }
 
@@ -78,6 +86,7 @@ function SearchOverlay({
   onPick: (p: Place | null) => void
 }) {
   const [q, setQ] = useState('')
+  const scope = useStore(settingsStore).searchScope ?? 'cz'
   const [results, setResults] = useState<Place[]>([])
   const [error, setError] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
@@ -106,6 +115,7 @@ function SearchOverlay({
       detail: near ? `GPS ${coordsKey}${near.detail ? ` · ${near.detail}` : ''}` : 'GPS bod',
       lat: coords.lat,
       lon: coords.lon,
+      tz: near?.tz,
     }
   }
   const [addrLoading, setAddrLoading] = useState(false)
@@ -116,7 +126,7 @@ function SearchOverlay({
     const ctrl = new AbortController()
     const t = setTimeout(() => {
       setAddrLoading(true)
-      searchAddresses(q, near, ctrl.signal)
+      searchAddresses(q, near, ctrl.signal, scope)
         .then(setAddr)
         .catch(() => !ctrl.signal.aborted && setAddr([]))
         .finally(() => !ctrl.signal.aborted && setAddrLoading(false))
@@ -125,7 +135,7 @@ function SearchOverlay({
       clearTimeout(t)
       ctrl.abort()
     }
-  }, [q, near, addresses])
+  }, [q, near, addresses, scope])
 
   useEffect(() => {
     loadStations()
@@ -169,6 +179,22 @@ function SearchOverlay({
           Zrušit
         </button>
       </div>
+      {addresses && (
+        <div className="mx-auto flex w-full max-w-lg items-center gap-2 px-4 pb-2">
+          <span className="text-xs text-subtle">Hledat:</span>
+          <div className="flex rounded-full bg-highlight p-0.5">
+            {SCOPES.map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => settingsStore.set({ searchScope: id })}
+                className={`rounded-full px-3 py-1 text-sm font-semibold transition ${scope === id ? 'bg-white text-black' : 'text-muted hover:text-white'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <ul className="mx-auto w-full max-w-lg flex-1 overflow-y-auto px-2 pb-8">
         {coords && (
           <li>
@@ -201,7 +227,7 @@ function SearchOverlay({
         {q.trim().length < 2 && (
           <li className="px-4 py-3 text-sm text-subtle">
             {addresses
-              ? 'Napiš zastávku nebo nádraží kdekoli v ČR, adresu (ulice a číslo) nebo GPS souřadnice (např. 50.0786, 14.4345).'
+              ? `Napiš zastávku nebo nádraží ${SCOPE_TEXT[scope]}, adresu (ulice a číslo) nebo GPS souřadnice (např. 50.0786, 14.4345).`
               : 'Napiš aspoň 2 písmena názvu stanice.'}
           </li>
         )}
@@ -220,7 +246,9 @@ function SearchOverlay({
           </li>
         ))}
         {addresses && (addr.length > 0 || addrLoading) && (
-          <li className="px-4 pt-3 pb-1 text-[11px] font-bold tracking-wider text-subtle uppercase">Zastávky v ČR, adresy a místa {addrLoading && '· hledám…'}</li>
+          <li className="px-4 pt-3 pb-1 text-[11px] font-bold tracking-wider text-subtle uppercase">
+            {scope === 'cz' ? 'Zastávky v ČR' : scope === 'europe' ? 'Zastávky v Evropě' : 'Zastávky ve světě'}, adresy a místa {addrLoading && '· hledám…'}
+          </li>
         )}
         {addr.map((r) => (
           <li key={`a-${r.lat}-${r.lon}`}>

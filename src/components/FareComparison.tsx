@@ -4,7 +4,8 @@ import { CATEGORY_LABELS } from '../lib/tickets'
 import type { PassengerCategory } from '../types'
 import { fmtKc, IconCheck, IconTicket } from './ui'
 
-const totalLabel = (o: FareOption) => (o.total === 0 && !o.incomplete ? 'zdarma' : `${o.estimated ? '~' : ''}${fmtKc(o.total)}${o.incomplete ? ' +' : ''}`)
+const totalLabel = (o: FareOption) =>
+  o.total === 0 ? (o.incomplete ? 'u dopravce' : 'zdarma') : `${o.estimated ? '~' : ''}${fmtKc(o.total)}${o.incomplete ? ' +' : ''}`
 
 function Part({ p }: { p: FarePart }) {
   return (

@@ -8,7 +8,7 @@
  * řádu 2026 (25 km 68 Kč, 100 km 221 Kč, 250 km 527 Kč). Přesnou cenu ukáže e-shop ČD.
  */
 import { carrierOf, legKey, type CarrierQuote } from './carriers'
-import { distanceM } from './geo'
+import { distanceM, inCzechia } from './geo'
 import { idosHint } from './geocode'
 import type { Journey, Leg, TransitLeg } from './journeys'
 import { chooseTicket, type TicketDecision } from './tickets'
@@ -237,23 +237,46 @@ function otherPart(l: TransitLeg, quotes?: Quotes): FarePart {
   const c = carrierOf(l)
   const q = quotes?.get(legKey(l))
   const covers = `${l.line} · ${l.from.name} → ${l.to.name}`
-  const idos: BuyAction = {
-    label: 'Vyhledat v IDOS',
-    href: idosLink(l.from, l.to, l.from.scheduled),
-    hint: `IDOS s předvyplněnou trasou ${l.from.name} → ${l.to.name}, odjezd ${new Date(l.from.scheduled).toTimeString().slice(0, 5)}.`,
-  }
+  const stations = `${l.from.name} → ${l.to.name}`
+  // IDOS zná jen spoje v ČR (a pár přeshraničních) – v zahraničí ho nenabízej
+  const domestic = inCzechia(l.from) && inCzechia(l.to)
   const buy: BuyAction[] = []
   if (q) buy.push({ label: `Koupit u ${c.name}`, href: q.href, hint: 'Otevře e-shop dopravce s předvyplněnou trasou a datem – vyber spoj a zaplať.', primary: true })
-  else if (c.web) buy.push({ label: c.id === 'other' ? 'Web dopravce' : `E-shop ${c.name}`, href: c.web, copy: `${l.from.name} → ${l.to.name}`, primary: c.id !== 'other' })
-  // bez přímého nákupu u dopravce aspoň IDOS s trasou (u FlixBusu bývají názvy stanic anglicky – IDOS je nenajde)
-  if (!q) buy.push(idos)
+  else if (c.web)
+    buy.push({
+      label: c.id === 'other' ? 'Web dopravce' : `E-shop ${c.name}`,
+      href: c.web,
+      copy: stations,
+      hint: 'Stanice se zkopírují do schránky – v e-shopu je jen vlož.',
+      primary: c.id !== 'other' || !domestic,
+    })
+  else
+    // bez odkazu v datech ani v seznamu známých dopravců: vyhledej e-shop dopravce
+    buy.push({
+      label: 'Najít jízdenku',
+      href: `https://www.google.com/search?${new URLSearchParams({ q: `${c.name} ${l.from.name} ${l.to.name} jízdenka` })}`,
+      hint: `Vyhledá e-shop dopravce ${c.name} a jízdenky na trase ${stations}.`,
+      primary: !domestic,
+    })
+  if (!q && domestic)
+    buy.push({
+      label: 'Vyhledat v IDOS',
+      href: idosLink(l.from, l.to, l.from.scheduled),
+      hint: `IDOS s předvyplněnou trasou ${stations}, odjezd ${new Date(l.from.scheduled).toTimeString().slice(0, 5)}.`,
+    })
   return {
     title: `Jízdenka ${c.name}`,
     covers,
     price: q ? q.price : null,
     priceFrom: q?.from,
     buy,
-    note: q?.note ?? (quotes?.has(legKey(l)) || c.id === 'other' ? 'Cenu ukáže dopravce – v jeho e-shopu, aplikaci nebo u řidiče.' : undefined),
+    note:
+      q?.note ??
+      (!domestic
+        ? 'Cenu ukáže dopravce – v zahraničí ji neodhadujeme.'
+        : quotes?.has(legKey(l)) || c.id === 'other'
+          ? 'Cenu ukáže dopravce – v jeho e-shopu, aplikaci nebo u řidiče.'
+          : undefined),
   }
 }
 

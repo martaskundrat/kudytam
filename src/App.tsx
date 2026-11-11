@@ -241,7 +241,9 @@ export default function App() {
           </button>
         </div>
 
-        {draftDest && <WhenPicker value={draftWhen} onChange={setDraftWhen} />}
+        {draftDest && (
+          <WhenPicker value={draftWhen} onChange={setDraftWhen} tz={draftWhen?.arriveBy ? draftDest.tz : draftOrigin?.tz} />
+        )}
 
         <div className="mt-3 flex gap-2">
   <Button onClick={search} disabled={loading && !dirty} className="flex-1 py-3">
@@ -295,7 +297,7 @@ export default function App() {
             <div className="flex items-center justify-between gap-2 pt-1">
               <h1 className="min-w-0 truncate text-xl font-extrabold">
                 Spojení do: {dest.name}
-                {when && <span className="block text-sm font-semibold text-brand">{whenLabel(when)}</span>}
+                {when && <span className="block text-sm font-semibold text-brand">{whenLabel(when, when.arriveBy ? dest.tz : settings.origin?.tz)}</span>}
               </h1>
               <button onClick={clearDestination} className="shrink-0 text-sm font-semibold text-muted hover:text-white">
                 Odjezdy v okolí

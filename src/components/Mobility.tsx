@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { formatDistance } from '../lib/geo'
 import { leaveAt, type Journey, type When } from '../lib/journeys'
-import { fmtWhen } from './Journeys'
+import { fmtWhen } from '../lib/time'
 import { bikeOptions, TAXI_PICKUP_MIN, taxiOption, type BikeOption } from '../lib/mobility'
 import type { LatLon, Settings } from '../types'
+import { NavButtons } from './NavButtons'
 import { fmtKc, fmtTime, IconBike, IconCar, IconSparkle } from './ui'
 
 const bestTransitEnd = (journeys: Journey[], now: number) =>
@@ -25,10 +26,6 @@ const btn = (primary?: boolean) =>
   `rounded-full px-4 py-2 text-sm font-bold transition active:scale-95 ${primary ? 'bg-brand text-black hover:bg-brand-hover' : 'ring-1 ring-zinc-500 hover:ring-white'}`
 const ext = (href: string) => (href.startsWith('intent:') ? {} : { target: '_blank', rel: 'noreferrer' })
 
-/** Mapy.com: navigace na kole mezi stanicemi (souřadnice v pořadí lon,lat) */
-const bikeNav = (a: LatLon, b: LatLon) =>
-  'https://mapy.com/fnc/v1/route?' +
-  new URLSearchParams({ mapset: 'outdoor', start: `${a.lon},${a.lat}`, end: `${b.lon},${b.lat}`, routeType: 'bike_road', navigate: 'true' })
 
 /** Sdílené kolo (živá data GBFS) – načte se samo pro dané odkud/kam. */
 export function BikeCards({
@@ -41,7 +38,7 @@ export function BikeCards({
   when,
 }: {
   from: LatLon
-  to: LatLon
+  to: LatLon & { tz?: string }
   walkKmh: number
   settings: Settings
   now: number
@@ -87,7 +84,7 @@ export function BikeCards({
               <div className="shrink-0 font-bold text-muted">~{o.totalMin} min</div>
             </div>
             <p className="mt-1 text-sm">
-              {later && <>Vyraž v <b>{fmtWhen(leave)}</b>, </>}V cíli kolem <b>{fmtTime(arrival)}</b>
+              {later && <>Vyraž v <b>{fmtWhen(leave, to.tz)}</b>, </>}V cíli kolem <b>{fmtTime(arrival, to.tz)}</b>
               <Compare arrival={arrival} journeys={journeys} now={now} />
             </p>
             <ol className="mt-2 space-y-0.5 text-sm text-muted">
@@ -114,9 +111,7 @@ export function BikeCards({
               <a href={o.open.href} {...ext(o.open.href)} className={btn(true)}>
                 Půjčit v aplikaci {o.brand}
               </a>
-              <a href={bikeNav(o.from, o.to)} target="_blank" rel="noreferrer" className={btn()}>
-                Navigovat na kole
-              </a>
+              <NavButtons from={o.from} to={o.to} mode="bike" label="Navigovat na kole" />
             </div>
             <p className="mt-1 text-[11px] text-subtle">
               {o.open.hint} Volná kola podle živých dat {o.brand}
@@ -141,7 +136,7 @@ export function TaxiCard({
   car: { durationMin: number; meters: number }
   when?: When | null
   from: LatLon & { name?: string }
-  to: LatLon & { name: string }
+  to: LatLon & { name: string; tz?: string }
   now: number
   journeys: Journey[]
 }) {
@@ -152,26 +147,30 @@ export function TaxiCard({
     <div className="rounded-2xl bg-surface p-4">
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-center gap-2 text-xl font-extrabold">
-          <IconCar className="size-6" /> Taxi · Uber, Bolt, Liftago
+          <IconCar className="size-6" /> Taxi · {t.services.map((s) => s.name).join(', ')}
         </div>
         <div className="shrink-0 font-bold text-muted">
           {t.durationMin} min · {formatDistance(t.meters)}
         </div>
       </div>
       <p className="mt-1 text-sm">
-        V cíli kolem <b>{fmtTime(t.arrival)}</b>
+        V cíli kolem <b>{fmtTime(t.arrival, to.tz)}</b>
         <Compare arrival={t.arrival} journeys={journeys} now={now} />
       </p>
       <p className="text-xs text-subtle">
         {t.arrival - (TAXI_PICKUP_MIN + t.durationMin) * 60000 - now > 60000
-          ? `Objednej na ${fmtWhen(t.arrival - (TAXI_PICKUP_MIN + t.durationMin) * 60000)} (v aplikaci jde jízda naplánovat předem).`
+          ? `Objednej na ${fmtWhen(t.arrival - (TAXI_PICKUP_MIN + t.durationMin) * 60000, to.tz)} (v aplikaci jde jízda naplánovat předem).`
           : `Počítáme s ~${TAXI_PICKUP_MIN} min, než auto přijede.`}
       </p>
       <div className="mt-2 flex items-baseline justify-between gap-3">
-        <span className="text-xs text-subtle">Orientační cena – přesnou ukáže aplikace před objednáním</span>
-        <span className="shrink-0 text-xl font-black text-brand">
-          ~{t.priceLow}–{fmtKc(t.priceHigh)}
+        <span className="text-xs text-subtle">
+          {t.priceHigh === null ? 'Cenu ukáže aplikace před objednáním (v zahraničí ji neodhadujeme).' : 'Orientační cena – přesnou ukáže aplikace před objednáním'}
         </span>
+        {t.priceHigh !== null && (
+          <span className="shrink-0 text-xl font-black text-brand">
+            ~{t.priceLow}–{fmtKc(t.priceHigh)}
+          </span>
+        )}
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
         {t.services.map((s, i) => (
@@ -181,7 +180,8 @@ export function TaxiCard({
         ))}
       </div>
       <p className="mt-1 text-[11px] text-subtle">
-        Uber se otevře s předvyplněným cílem. U Boltu a Liftaga se cíl „{to.name}“ zkopíruje do schránky – v aplikaci ho jen vlož.
+        Uber se otevře s předvyplněným cílem. U {t.services.length > 2 ? 'Boltu a Liftaga' : 'Boltu'} se cíl „{to.name}“ zkopíruje do
+        schránky – v aplikaci ho jen vlož.
       </p>
     </div>
   )

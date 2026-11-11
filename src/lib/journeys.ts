@@ -6,7 +6,7 @@
  * „širšího okolí“, takže vyhledávač sám zváží, jestli se vyplatí dojít dál na rychlejší spoj.
  */
 import type { LatLon, Place, Settings, VehicleType } from '../types'
-import { distanceM, travelMinutes } from './geo'
+import { distanceM, inCzechia, travelMinutes } from './geo'
 import { bikeAreaAt, bikeFromStop, bikesNear, bikeToStop, type BikeOption } from './mobility'
 import { platformZones, zonesNear } from './stations'
 
@@ -20,6 +20,8 @@ export interface LegStop {
   time: number
   scheduled: number
   track?: string
+  /** časové pásmo zastávky (IANA) */
+  tz?: string
 }
 
 export interface WalkLeg {
@@ -55,6 +57,8 @@ export interface TransitLeg {
   agency: string
   agencyId?: string
   agencyUrl?: string
+  /** odkaz na jízdné / nákup jízdenek z jízdních řádů (GTFS agency_fare_url) */
+  agencyFareUrl?: string
   /** dopravce pro účely jízdného: vlaky PID (S, R) jezdí převážně ČD */
   operator: 'pid' | 'cd' | 'other'
   tripId?: string
@@ -99,6 +103,9 @@ const czStation = (stopId?: string) => /(?:^|\D)5[45]\d{5}(?!\d)/.test(String(st
 
 function operatorOf(l: any, vehicle: VehicleType): TransitLeg['operator'] {
   const agency = String(l.agencyName ?? '')
+  // odhad ceny ČD jen pro úseky celé v ČR – mezinárodní jízdenky mají jiný ceník
+  const domestic = inCzechia(l.from) && inCzechia(l.to)
+  if (!domestic) return String(l.from?.stopId ?? '').startsWith('cz-PID_') ? 'pid' : 'other'
   if (CD_NAME.test(agency)) return 'cd'
   if (String(l.from?.stopId ?? '').startsWith('cz-PID_')) return 'pid'
   // mezinárodní vlaky ZSSK / ÖBB mezi českými stanicemi (SR70 54…/55…) jedou v ČR v tarifu ČD
@@ -124,6 +131,7 @@ function stopOf(p: any, at: 'departure' | 'arrival'): LegStop {
     time: t,
     scheduled: Number.isNaN(s) ? t : s,
     track: p.track ?? p.scheduledTrack ?? undefined,
+    tz: p.tz ?? undefined,
   }
 }
 
@@ -210,6 +218,7 @@ async function parse(data: any, origin: LatLon & { name?: string }, dest: Place)
         agency: l.agencyName ?? '',
         agencyId: l.agencyId ?? undefined,
         agencyUrl: l.agencyUrl ?? undefined,
+        agencyFareUrl: l.agencyFareUrl ?? undefined,
         operator: operatorOf(l, MODE[l.mode] ?? 'other'),
         tripId: l.tripId ?? undefined,
         points: [l.from, ...(l.intermediateStops ?? []), l.to].map((p: any) => ({ lat: p.lat, lon: p.lon })),
@@ -538,6 +547,7 @@ export interface TripStop {
   schedDep?: number
   track?: string
   cancelled: boolean
+  tz?: string
 }
 
 export interface TripDetail {
@@ -567,6 +577,7 @@ export async function fetchTrip(tripId: string): Promise<TripDetail> {
         schedDep: ts(p.scheduledDeparture),
         track: p.track ?? p.scheduledTrack ?? undefined,
         cancelled: !!p.cancelled,
+        tz: p.tz ?? undefined,
       }
       // navazující úseky (stay-seated) sdílejí zastávku
       if (prev && prev.name === stop.name) Object.assign(prev, { dep: stop.dep ?? prev.dep, schedDep: stop.schedDep ?? prev.schedDep })

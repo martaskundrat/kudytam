@@ -3,8 +3,8 @@
  * (data OpenStreetMap a jízdní řády) a rozpoznání zadaných GPS souřadnic.
  * Volá se přes proxy /api/transitous/* (povinný User-Agent s kontaktem).
  */
-import type { LatLon, Place } from '../types'
-import { distanceM } from './geo'
+import type { LatLon, Place, SearchScope } from '../types'
+import { distanceM, inCzechia } from './geo'
 
 interface GeoArea {
   name: string
@@ -20,19 +20,31 @@ function toPlace(r: any): Place {
   // „Praha 2, obvod Praha 2“ -> „Praha 2“
   const local = sorted.filter((n) => !(n.startsWith('obvod ') && sorted.includes(n.slice('obvod '.length))))
   const name = r.type === 'ADDRESS' && r.street ? `${r.street} ${r.houseNumber ?? ''}`.trim() : r.name
-  const detail = local.slice(0, 2).join(', ')
-  return { name, detail: r.type === 'STOP' ? `Zastávka${detail ? ` · ${detail}` : ''}` : detail, lat: r.lat, lon: r.lon }
+  // v zahraničí i stát (Paříž, FR)
+  const detail = [...local.slice(0, 2), ...(r.country && r.country !== 'CZ' ? [r.country] : [])].join(', ')
+  return { name, detail: r.type === 'STOP' ? `Zastávka${detail ? ` · ${detail}` : ''}` : detail, lat: r.lat, lon: r.lon, tz: r.tz ?? undefined }
 }
 
-/** zhruba území ČR (zastávky z Transitous nemají vždy uvedený stát) */
-const inCzechia = (p: LatLon) => p.lat >= 48.5 && p.lat <= 51.1 && p.lon >= 12.0 && p.lon <= 18.9
+/** evropské státy (ISO 3166-1 alpha-2) pro rozsah „Evropa“ */
+const EUROPE = new Set(
+  'AL AD AM AT AZ BY BE BA BG HR CY CZ DK EE FI FR GE DE GI GR HU IS IE IT XK LV LI LT LU MT MD MC ME NL MK NO PL PT RO RU SM RS SK SI ES SE CH TR UA GB VA FO IM JE GG AX'.split(' '),
+)
+/** zhruba Evropa – pro výsledky bez uvedeného státu */
+const europeBox = (p: LatLon) => p.lat >= 34 && p.lat <= 72 && p.lon >= -25 && p.lon <= 45
 
-export async function searchAddresses(query: string, near?: LatLon | null, signal?: AbortSignal): Promise<Place[]> {
+function inScope(r: any, scope: SearchScope): boolean {
+  if (scope === 'world') return true
+  if (scope === 'cz') return r.country ? r.country === 'CZ' && inCzechia(r) : inCzechia(r)
+  return r.country ? EUROPE.has(r.country) : europeBox(r)
+}
+
+export async function searchAddresses(query: string, near?: LatLon | null, signal?: AbortSignal, scope: SearchScope = 'cz'): Promise<Place[]> {
   const q = query.trim()
   if (q.length < 3) return []
   // i zastávky a nádraží v celé ČR (zastávky PID hledá aplikace sama ve vlastním seznamu)
-  const params = new URLSearchParams({ text: q, type: 'ADDRESS,PLACE,STOP', numResults: '15', language: 'cs' })
-  if (near) {
+  const params = new URLSearchParams({ text: q, type: 'ADDRESS,PLACE,STOP', numResults: scope === 'cz' ? '15' : '25', language: 'cs' })
+  // v ČR upřednostni okolí; v Evropě a ve světě jen mírně, ať se najde i Paříž z Prahy
+  if (near && scope === 'cz') {
     params.set('place', `${near.lat},${near.lon}`)
     params.set('placeBias', '3') // upřednostni okolí, ale nevylučuj zbytek ČR
   }
@@ -43,12 +55,11 @@ export async function searchAddresses(query: string, near?: LatLon | null, signa
   const seen = new Set<string>()
   const out: Place[] = []
   for (const r of data) {
-    if (r.country && r.country !== 'CZ') continue
-    if (!inCzechia(r)) continue
-    // zastávky jen z českých jízdních řádů (zahraniční sady mají české zastávky pod cizími názvy);
+    if (!inScope(r, scope)) continue
+    // zastávky v ČR jen z českých jízdních řádů (zahraniční sady mají české zastávky pod cizími názvy);
     // zastávky PID hledá aplikace sama ve vlastním seznamu
     const id = String(r.id ?? '')
-    if (r.type === 'STOP' && (!id.startsWith('cz-') || id.startsWith('cz-PID_'))) continue
+    if (r.type === 'STOP' && (id.startsWith('cz-PID_') || (inCzechia(r) && !id.startsWith('cz-')))) continue
     const p = toPlace(r)
     // tatáž zastávka bývá ve více datových sadách (ČR, Slovensko, Maďarsko) – stejné jméno do 300 m je duplicita
     if (r.type === 'STOP' && out.some((o) => o.name === p.name && distanceM(o, p) < 300)) continue
@@ -58,7 +69,7 @@ export async function searchAddresses(query: string, near?: LatLon | null, signa
     if (seen.has(key) || out.some((o) => distanceM(o, p) < 40)) continue
     seen.add(key)
     out.push(p)
-    if (out.length >= 8) break
+    if (out.length >= (scope === 'cz' ? 8 : 12)) break
   }
   return out
 }
