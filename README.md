@@ -86,7 +86,7 @@ K GPS bodu se dohledá nejbližší adresa (/reverse-geocode).
 
 ## Cesta pěšky
 
-Když je cíl vzdušnou čarou do „širšího okolí“ (menu), nabídne se i cesta pěšky (Transitous `direct`, se zvolenou rychlostí)
+Když je cíl vzdušnou čarou do „širšího okolí“ (menu), nebo když chůze (do 45 min) není o víc než 10 min pomalejší než nejrychlejší MHD, nabídne se i cesta pěšky (Transitous `direct`, se zvolenou rychlostí)
 se srovnáním příjezdu s nejrychlejší MHD a tlačítkem pro navigaci v mapách.
 
 ## Domov

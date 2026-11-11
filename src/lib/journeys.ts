@@ -111,6 +111,9 @@ function stopOf(p: any, at: 'departure' | 'arrival'): LegStop {
   }
 }
 
+/** nejdelší cesta pěšky, kterou nabízíme jako alternativu k MHD */
+export const MAX_WALK_MIN = 45
+
 /** Cesta celá pěšky (Transitous `direct`) */
 export interface DirectWalk {
   durationMin: number
@@ -226,9 +229,9 @@ export async function planJourneys(origin: LatLon & { name?: string }, dest: Pla
   const maxPre = Math.min(1800, Math.max(600, (settings.wideRadius * 1.3) / speed))
   const query = new URLSearchParams({
     ...baseParams(`${origin.lat},${origin.lon}`, dest, kmh, maxPre),
-    // i cesta pěšky – do vzdálenosti „širšího okolí“ s rezervou na klikaté ulice
+    // i cesta pěšky (do 45 min) – jestli ji nabídnout, rozhoduje aplikace podle vzdálenosti a srovnání s MHD
     directModes: 'WALK',
-    maxDirectTime: String(Math.round(Math.min(3600, Math.max(900, (settings.wideRadius * 1.6) / speed)))),
+    maxDirectTime: String(Math.round(Math.max(MAX_WALK_MIN * 60, (settings.wideRadius * 1.6) / speed))),
     searchWindow: '2700',
     numItineraries: '6',
     maxItineraries: '10',

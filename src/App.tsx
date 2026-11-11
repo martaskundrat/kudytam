@@ -6,7 +6,7 @@ import { RideSheet } from './components/RideSheet'
 import { StationPicker } from './components/StationPicker'
 import { Button, IconBus, IconFlag, IconHome, IconMenu, IconPin, IconRefresh, IconSwap, useNow } from './components/ui'
 import { distanceM, getPosition, travelMinutes } from './lib/geo'
-import { mergeJourneys, morePage, planJourneys, type Journey, type JourneyPage } from './lib/journeys'
+import { MAX_WALK_MIN, mergeJourneys, morePage, planJourneys, type Journey, type JourneyPage } from './lib/journeys'
 import { plan, type PlanResult } from './lib/planner'
 import { settingsStore, speedKmh, useStore } from './lib/store'
 import { getProvider, type TransitProvider } from './lib/transit'
@@ -148,12 +148,20 @@ export default function App() {
     if (target) setSelectedId(target.id)
   }
 
-  // cíl v dosahu „širšího okolí“ -> nabídni i cestu pěšky
+  // Cesta pěšky se nabídne, když je cíl v „širším okolí“, nebo když chůze (do 45 min)
+  // není o víc než WALK_SLACK_MIN pomalejší než nejrychlejší MHD – typicky cesta domů kousek od centra.
+  const WALK_SLACK_MIN = 10
   const airToDest = dest && routeOrigin ? distanceM(routeOrigin, dest) : null
-  const walkOption =
-    dest && routeOrigin && airToDest !== null && airToDest <= settings.wideRadius
-      ? (page?.walk ?? { durationMin: Math.max(1, Math.round(travelMinutes(airToDest, kmh))), meters: Math.round(airToDest * 1.3), estimated: true })
-      : null
+  const walkCandidate =
+    airToDest === null
+      ? null
+      : (page?.walk ?? { durationMin: Math.max(1, Math.round(travelMinutes(airToDest, kmh))), meters: Math.round(airToDest * 1.3), estimated: true })
+  const fastestTransitEnd = journeys?.filter((j) => j.start >= now - 30000).reduce((m, j) => Math.min(m, j.end), Infinity) ?? Infinity
+  const walkCompetitive =
+    !!walkCandidate &&
+    walkCandidate.durationMin <= MAX_WALK_MIN &&
+    now + walkCandidate.durationMin * 60000 <= fastestTransitEnd + WALK_SLACK_MIN * 60000
+  const walkOption = dest && routeOrigin && walkCandidate && ((airToDest ?? Infinity) <= settings.wideRadius || walkCompetitive) ? walkCandidate : null
 
   const pick = journeys ? recommend(journeys, settings.nearRadius, now) : null
   const showDepartures = !dest && result
