@@ -65,6 +65,21 @@ Bez klíče aplikace běží na **demo datech** (smyšlené odjezdy).
 
 ⚠️ Přepočet pásma P u regionálních jízd je zjednodušený (`PRAGUE_P_WEIGHT`). Před ostrým nasazením ho ověř v Tarifu PID.
 
+## Porovnání jízdného
+
+`src/lib/fares.ts` + `src/components/FareComparison.tsx`. Nejlevnější varianta je nahoře, ostatní jsou v „Další možnosti jízdného“.
+- PID v aplikaci Lítačka / papírová / SMS (Tarif PID 2026).
+- Vlaky na jízdenku ČD + MHD s PID. Cena ČD je **orientační odhad** interpolací z cen, které ČD zveřejnily
+  k jízdnímu řádu 2026 (25 km 68 Kč, 100 km 221 Kč, 250 km 527 Kč), se státní slevou 50 %
+  (děti, studenti 18–26, senioři 65+). Přesnou cenu ukáže [e-shop ČD](https://www.cd.cz/eshop/).
+- Tlačítko Lítačky na Androidu otevře nainstalovanou aplikaci (intent `cz.dpp.praguepublictransport`,
+  jinak Google Play). Na iOS Lítačka nemá veřejný odkaz do aplikace, takže se otevře App Store s tlačítkem „Otevřít“.
+
+## Trasa spoje
+
+Klepnutí na úsek v detailu spojení načte přes Transitous `/trip` všechny zastávky spoje s aktuálními časy.
+Poloha vozidla se odvozuje z časů průjezdů a obnovuje se každých 30 s.
+
 ## Jízdenky se v aplikaci nekupují
 
 Aplikace jen ukáže, jaký typ jízdenky potřebuješ a kolik stojí v aplikaci PID Lítačka, papírově a přes SMS.

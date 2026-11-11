@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useRef, useState, type TouchEvent } from 'react'
 import { formatDistance } from '../lib/geo'
-import { firstWalk, shiftLeg, transitLegs, type Journey, type TransitLeg } from '../lib/journeys'
+import { fetchTrip, firstWalk, shiftLeg, transitLegs, tripPosition, type Journey, type TransitLeg, type TripDetail } from '../lib/journeys'
 import { settingsStore, speedKmh, useStore } from '../lib/store'
-import { quoteJourney } from '../lib/tickets'
-import { TicketInfo } from './TicketInfo'
+import { fareOptions } from '../lib/fares'
+import { FareComparison } from './FareComparison'
 import { fmtKc, fmtTime, IconSparkle, IconWalk, LineBadge, Sheet, useNow, VEHICLE_LABEL } from './ui'
 
 export interface JourneyPick {
@@ -56,7 +56,7 @@ function LegChips({ j }: { j: Journey }) {
 
 export function JourneyCard({ j, now, pick, onSelect }: { j: Journey; now: number; pick?: JourneyPick | null; onSelect: (j: Journey) => void }) {
   const settings = useStore(settingsStore)
-  const q = quoteJourney(j, settings)
+  const cheapest = fareOptions(j, settings)[0]
   const firstTransit = transitLegs(j)[0]
   const missed = j.start < now - 30000
   const recommended = pick?.journey.id === j.id
@@ -94,7 +94,13 @@ export function JourneyCard({ j, now, pick, onSelect }: { j: Journey; now: numbe
       </div>
       <div className="mt-1 flex items-center justify-between text-xs text-subtle">
         <span>{j.transfers === 0 ? 'bez přestupu' : j.transfers === 1 ? '1 přestup' : `${j.transfers} přestupy`}</span>
-        <span>{q.decision.needed ? `${q.decision.product.name.split(' · ').slice(0, 2).join(' · ')} · ${fmtKc(q.decision.product.prices.app)}` : 'jízdenka není potřeba'}</span>
+        <span>
+          {!cheapest
+            ? ''
+            : cheapest.total === 0 && !cheapest.incomplete
+              ? 'jízdenka není potřeba'
+              : `od ${cheapest.estimated ? '~' : ''}${fmtKc(cheapest.total)}${cheapest.incomplete ? ' +' : ''}`}
+        </span>
       </div>
       {recommended && pick.savedMin !== null && pick.savedMin > 0 && (
         <p className="mt-2 text-sm text-brand">
@@ -153,7 +159,7 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
 
   if (!journey) return null
   const shown = override?.baseId === journey.id ? override.j : journey
-  const q = quoteJourney(shown, settings)
+  const fares = fareOptions(shown, settings)
   const departed = shown.start < now - 30000
   const dest = settings.destination
 
@@ -244,15 +250,9 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
       </ol>
 
       <div className="mt-4 space-y-2">
-        <TicketInfo q={q} category={settings.category} />
-        {q.nonPid.length > 0 && (
-          <p className="rounded-xl bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-            Úsek {q.nonPid.map((l) => `${l.line} (${l.from.name} → ${l.to.name})`).join(', ')} nevede po síti PID – jízdenku na něj kup u
-            dopravce{q.nonPid[0].agency ? ` (${q.nonPid[0].agency})` : ''}.
-          </p>
-        )}
+        <FareComparison key={shown.id} options={fares} category={settings.category} />
       </div>
-      <p className="py-5 text-center text-[11px] text-subtle">Kartu spoje táhni doleva = pozdější spoj · doprava = dřívější</p>
+      <p className="py-5 text-center text-[11px] text-subtle">Klepni na spoj = všechny zastávky · táhni doleva = pozdější spoj · doprava = dřívější</p>
     </Sheet>
   )
 }
@@ -274,7 +274,9 @@ function LegCard({
   onShift: (dir: 'prev' | 'next') => void
 }) {
   const [dx, setDx] = useState(0)
+  const [showStops, setShowStops] = useState(false)
   const touch = useRef<{ x: number; y: number; horizontal: boolean | null } | null>(null)
+  const swiped = useRef(false)
 
   const onTouchStart = (e: TouchEvent) => {
     if (canShift) touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, horizontal: null }
@@ -285,7 +287,10 @@ function LegCard({
     const mx = e.touches[0].clientX - t.x
     const my = e.touches[0].clientY - t.y
     if (t.horizontal === null && Math.abs(mx) + Math.abs(my) > 10) t.horizontal = Math.abs(mx) > Math.abs(my)
-    if (t.horizontal) setDx(mx)
+    if (t.horizontal) {
+      swiped.current = true
+      setDx(mx)
+    }
   }
   const onTouchEnd = () => {
     // prst doleva = pozdější spoj, doprava = dřívější
@@ -308,7 +313,13 @@ function LegCard({
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
-        className={`relative bg-surface p-3 ${anim} ${busy ? 'opacity-60' : ''}`}
+        onClick={(e) => {
+          // klepnutí (ne tažení, ne tlačítko) rozbalí seznam zastávek
+          if (swiped.current) return void (swiped.current = false)
+          if ((e.target as HTMLElement).closest('button')) return
+          if (l.tripId) setShowStops(!showStops)
+        }}
+        className={`relative cursor-pointer bg-surface p-3 ${anim} ${busy ? 'opacity-60' : ''}`}
         style={{ transform: dx ? `translateX(${dx * 0.7}px)` : undefined, transition: dx ? 'none' : 'transform .2s' }}
       >
         <div className="flex items-center gap-3">
@@ -356,7 +367,115 @@ function LegCard({
         {l.cancelled && <p className="mt-2 text-sm font-semibold text-red-400">Spoj je zrušen.</p>}
         {busy && <p className="mt-2 text-xs text-muted">Hledám jiný spoj…</p>}
         {note && <p className="mt-2 text-xs text-amber-300">{note}</p>}
+        {l.tripId && (
+          <p className="mt-2 text-xs font-semibold text-muted">{showStops ? 'Skrýt zastávky ▴' : 'Všechny zastávky a poloha spoje ▾'}</p>
+        )}
+        {showStops && l.tripId && <TripStops tripId={l.tripId} from={l.from.name} to={l.to.name} />}
       </div>
     </li>
+  )
+}
+
+/**
+ * Celá trasa spoje: kde je teď, zpoždění, kam až jede.
+ * Poloha se odvozuje z aktuálních (real-time) časů průjezdů zastávkami.
+ */
+function TripStops({ tripId, from, to }: { tripId: string; from: string; to: string }) {
+  const [trip, setTrip] = useState<TripDetail | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const now = useNow(15000)
+
+  useEffect(() => {
+    let alive = true
+    const load = () =>
+      fetchTrip(tripId)
+        .then((t) => alive && setTrip(t))
+        .catch((e) => alive && setError((e as Error).message))
+    load()
+    const id = setInterval(load, 30000) // aktuální zpoždění
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [tripId])
+
+  if (error && !trip) return <p className="mt-3 text-xs text-red-400">{error}</p>
+  if (!trip) return <p className="mt-3 text-xs text-muted">Načítám trasu spoje…</p>
+
+  const { stops } = trip
+  const { lastIdx, atStop } = tripPosition(stops, now)
+  const iFrom = stops.findIndex((s) => s.name === from)
+  const iTo = stops.findIndex((s, i) => i > iFrom && s.name === to)
+  const delayAt = (i: number) => {
+    const s = stops[i]
+    if (!s) return null
+    const t = s.dep ?? s.arr
+    const st = s.schedDep ?? s.schedArr
+    return trip.realTime && t !== undefined && st !== undefined ? Math.round((t - st) / 60000) : null
+  }
+  const curDelay = delayAt(Math.max(0, lastIdx))
+  const last = stops[stops.length - 1]
+  const status =
+    lastIdx < 0
+      ? `Spoj ještě nevyjel z výchozí zastávky ${stops[0]?.name}.`
+      : lastIdx === stops.length - 1 && !atStop
+        ? 'Spoj už dojel do konečné.'
+        : atStop
+          ? `Spoj teď stojí v zastávce ${stops[lastIdx].name}.`
+          : `Spoj je teď mezi zastávkami ${stops[lastIdx].name} a ${stops[lastIdx + 1]?.name}.`
+
+  return (
+    <div className="mt-3 cursor-default rounded-xl bg-bg/60 p-3" onClick={(e) => e.stopPropagation()}>
+      <p className="text-sm font-semibold">{status}</p>
+      <p className="mb-3 text-xs text-muted">
+        Jede až do: <span className="text-white">{last?.name}</span>
+        {trip.realTime ? (
+          curDelay ? (
+            <span className="text-amber-400"> · zpoždění {curDelay} min</span>
+          ) : (
+            <span className="text-brand"> · jede včas</span>
+          )
+        ) : (
+          <span> · jen podle jízdního řádu</span>
+        )}
+      </p>
+      <ol className="relative ml-1.5 border-l-2 border-zinc-700">
+        {stops.map((s, i) => {
+          const passed = i < lastIdx || (i === lastIdx && !atStop)
+          const here = i === lastIdx && atStop
+          const mine = iFrom >= 0 && iTo >= 0 && i >= iFrom && i <= iTo
+          const t = s.dep ?? s.arr
+          const d = delayAt(i)
+          const dot = here
+            ? 'animate-pulse border-brand bg-brand'
+            : i === iFrom || i === iTo
+              ? 'border-brand bg-bg'
+              : passed
+                ? 'border-zinc-600 bg-zinc-600'
+                : 'border-zinc-500 bg-bg'
+          return (
+            <li key={i} className={`relative py-1 pl-4 text-sm ${passed ? 'text-subtle' : mine ? 'text-white' : 'text-muted'}`}>
+              <span className={`absolute top-1/2 -left-[7px] size-3 -translate-y-1/2 rounded-full border-2 ${dot}`} />
+              {/* vozidlo právě mezi touto a další zastávkou */}
+              {i === lastIdx && !atStop && i < stops.length - 1 && (
+                <span className="absolute -bottom-1.5 -left-[6px] z-10 size-2.5 animate-pulse rounded-full bg-brand" />
+              )}
+              <div className="flex items-baseline gap-2">
+                <span className={`w-11 shrink-0 tabular-nums ${mine ? 'font-bold' : ''}`}>{t ? fmtTime(t) : ''}</span>
+                <span className={`min-w-0 flex-1 truncate ${i === iFrom || i === iTo ? 'font-bold' : ''}`}>
+                  {s.name}
+                  {s.track && <span className="text-subtle"> · {s.track}</span>}
+                  {i === iFrom && <span className="ml-1 text-xs text-brand">nástup</span>}
+                  {i === iTo && <span className="ml-1 text-xs text-brand">výstup</span>}
+                  {s.cancelled && <span className="ml-1 text-xs text-red-400">neobsluhuje se</span>}
+                </span>
+                {d !== null && d > 0 && <span className="shrink-0 text-xs text-amber-400">+{d}</span>}
+              </div>
+            </li>
+          )
+        })}
+      </ol>
+      <p className="mt-2 text-[11px] text-subtle">Poloha je odvozená z aktuálních časů průjezdů, obnovuje se každých 30 s.</p>
+    </div>
   )
 }

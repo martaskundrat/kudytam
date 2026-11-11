@@ -1,9 +1,9 @@
+import { litackaLink } from '../lib/fares'
 import { CATEGORY_LABELS, type Quote } from '../lib/tickets'
 import type { PassengerCategory } from '../types'
 import { fmtKc, IconCheck, IconTicket } from './ui'
 
 const BUY_LINKS = {
-  app: 'https://pid.cz/aplikace-pid-litacka/',
   info: 'https://pid.cz/jizdenky/',
 }
 
@@ -59,8 +59,8 @@ export function TicketInfo({ q, category, compact }: { q: Quote; category: Passe
           {p.prague && p.prices.sms && <p className="mt-1.5 text-[11px] text-subtle">SMS jízdenka platí jen v pásmu P a ne ve vlacích.</p>}
           <div className="mt-3 flex gap-2">
             <a
-              href={BUY_LINKS.app}
-              target="_blank"
+              href={litackaLink().href}
+              target={litackaLink().href.startsWith("intent:") ? undefined : "_blank"}
               rel="noreferrer"
               className="flex-1 rounded-full bg-brand py-2.5 text-center text-sm font-bold text-black transition hover:bg-brand-hover active:scale-95"
             >

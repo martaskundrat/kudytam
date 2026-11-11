@@ -45,6 +45,12 @@ export interface TransitLeg {
   zones: string[]
   isPid: boolean
   agency: string
+  agencyUrl?: string
+  /** dopravce pro účely jízdného: vlaky PID (S, R) jezdí převážně ČD */
+  operator: 'pid' | 'cd' | 'other'
+  tripId?: string
+  /** body trasy (nástup, mezilehlé zastávky, výstup) – pro odhad vzdálenosti */
+  points: LatLon[]
 }
 
 export type Leg = WalkLeg | TransitLeg
@@ -78,6 +84,15 @@ const MODE: Record<string, VehicleType> = {
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+const CD_NAME = /(č|c)esk(é|e) dr(á|a)hy/i
+function operatorOf(l: any, vehicle: VehicleType): TransitLeg['operator'] {
+  const agency = String(l.agencyName ?? '')
+  if (CD_NAME.test(agency)) return 'cd'
+  if (String(l.from?.stopId ?? '').startsWith('cz-PID_')) return 'pid'
+  // vlak z celostátních dat bez uvedeného dopravce – v ČR nejčastěji ČD
+  if (vehicle === 'train' && !agency) return 'cd'
+  return 'other'
+}
 const PID_PREFIX = 'cz-PID_'
 const gtfsOf = (stopId?: string) => (stopId?.startsWith(PID_PREFIX) ? stopId.slice(PID_PREFIX.length) : undefined)
 
@@ -158,6 +173,10 @@ async function parse(data: any, origin: LatLon & { name?: string }, dest: Place)
         zones: [...zones],
         isPid: zones.size > 0,
         agency: l.agencyName ?? '',
+        agencyUrl: l.agencyUrl ?? undefined,
+        operator: operatorOf(l, MODE[l.mode] ?? 'other'),
+        tripId: l.tripId ?? undefined,
+        points: [l.from, ...(l.intermediateStops ?? []), l.to].map((p: any) => ({ lat: p.lat, lon: p.lon })),
       }
     })
     // první/poslední pěší úsek nemá název – doplň výchozí místo a cíl
@@ -288,3 +307,67 @@ export async function shiftLeg(j: Journey, legIndex: number, dir: 'prev' | 'next
 
 export const transitLegs = (j: Journey) => j.legs.filter((l): l is TransitLeg => l.kind === 'transit')
 export const firstWalk = (j: Journey) => (j.legs[0]?.kind === 'walk' ? (j.legs[0] as WalkLeg) : null)
+
+/* ---------- celá trasa spoje (seznam zastávek) ---------- */
+
+export interface TripStop {
+  name: string
+  /** příjezd / odjezd včetně zpoždění */
+  arr?: number
+  dep?: number
+  schedArr?: number
+  schedDep?: number
+  track?: string
+  cancelled: boolean
+}
+
+export interface TripDetail {
+  stops: TripStop[]
+  realTime: boolean
+  headsign: string
+  fetchedAt: number
+}
+
+const ts = (v?: string) => (v ? Date.parse(v) : undefined)
+
+/** Všechny zastávky spoje s aktuálními časy (Transitous /trip). */
+export async function fetchTrip(tripId: string): Promise<TripDetail> {
+  const res = await fetch(`/api/transitous/trip?tripId=${encodeURIComponent(tripId)}&detailedLegs=false`)
+  if (!res.ok) throw new Error(`Trasu spoje se nepodařilo načíst (${res.status}).`)
+  const data = await res.json()
+  const legs: any[] = data.legs ?? []
+  const stops: TripStop[] = []
+  for (const l of legs) {
+    for (const p of [l.from, ...(l.intermediateStops ?? []), l.to]) {
+      const prev = stops[stops.length - 1]
+      const stop: TripStop = {
+        name: p.name,
+        arr: ts(p.arrival),
+        dep: ts(p.departure),
+        schedArr: ts(p.scheduledArrival),
+        schedDep: ts(p.scheduledDeparture),
+        track: p.track ?? p.scheduledTrack ?? undefined,
+        cancelled: !!p.cancelled,
+      }
+      // navazující úseky (stay-seated) sdílejí zastávku
+      if (prev && prev.name === stop.name) Object.assign(prev, { dep: stop.dep ?? prev.dep, schedDep: stop.schedDep ?? prev.schedDep })
+      else stops.push(stop)
+    }
+  }
+  return { stops, realTime: legs.some((l) => l.realTime), headsign: legs[0]?.headsign ?? '', fetchedAt: Date.now() }
+}
+
+/** Kde je spoj teď: index poslední projeté zastávky a jestli v ní právě stojí. */
+export function tripPosition(stops: TripStop[], now = Date.now()): { lastIdx: number; atStop: boolean } {
+  let lastIdx = -1
+  let atStop = false
+  for (let i = 0; i < stops.length; i++) {
+    const a = stops[i].arr ?? stops[i].dep
+    const d = stops[i].dep ?? stops[i].arr
+    if (a !== undefined && a <= now) {
+      lastIdx = i
+      atStop = d !== undefined && d > now
+    }
+  }
+  return { lastIdx, atStop }
+}
