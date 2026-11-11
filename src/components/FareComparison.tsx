@@ -17,19 +17,25 @@ function Part({ p }: { p: FarePart }) {
       </div>
       <p className="mt-0.5 text-xs text-subtle">{p.covers}</p>
       {p.note && <p className={`mt-1 text-xs ${p.price === 0 ? 'text-brand' : 'text-amber-300'}`}>{p.note}</p>}
-      {p.buy && (
-        <>
-          <a
-            href={p.buy.href}
-            target={p.buy.href.startsWith('intent:') ? undefined : '_blank'}
-            rel="noreferrer"
-            className="mt-2 inline-block rounded-full bg-brand px-4 py-2 text-sm font-bold text-black transition hover:bg-brand-hover active:scale-95"
-          >
-            {p.buy.label}
-          </a>
-          {p.buy.hint && <p className="mt-1 text-[11px] text-subtle">{p.buy.hint}</p>}
-        </>
+      {p.buy.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {p.buy.map((b) => (
+            <a
+              key={b.label}
+              href={b.href}
+              target={b.href.startsWith('intent:') ? undefined : '_blank'}
+              rel="noreferrer"
+              onClick={() => b.copy && navigator.clipboard?.writeText(b.copy).catch(() => {})}
+              className={`rounded-full px-4 py-2 text-sm font-bold transition active:scale-95 ${
+                b.primary ? 'bg-brand text-black hover:bg-brand-hover' : 'ring-1 ring-zinc-500 hover:ring-white'
+              }`}
+            >
+              {b.label}
+            </a>
+          ))}
+        </div>
       )}
+      {p.buy.map((b) => b.hint && <p key={b.label} className="mt-1 text-[11px] text-subtle">{b.hint}</p>)}
     </li>
   )
 }

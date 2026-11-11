@@ -2,7 +2,8 @@ import { useState, type ReactNode } from 'react'
 import { settingsStore, speedKmh, TRAVEL_MODES, uid, useStore } from '../lib/store'
 import { ALL_ZONES, CATEGORY_LABELS, isCouponActive, PRAGUE_ZONES } from '../lib/tickets'
 import type { Coupon, PassengerCategory } from '../types'
-import { Button, IconClose, IconPlus, IconTrash } from './ui'
+import { StationPicker } from './StationPicker'
+import { Button, IconClose, IconHome, IconPlus, IconTrash } from './ui'
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -30,6 +31,20 @@ export function Menu({ open, onClose, liveData }: { open: boolean; onClose: () =
             <IconClose />
           </button>
         </div>
+
+        <Section title="Domov">
+          <div className="rounded-xl bg-highlight">
+            <StationPicker
+              label="Domovská stanice"
+              icon={<IconHome />}
+              value={s.home}
+              emptyLabel="Nastav stanici u domova"
+              placeholder="Stanice u domova"
+              onChange={(home) => set({ home })}
+            />
+          </div>
+          <p className="mt-2 text-xs text-subtle">Tlačítko „Domů“ na hlavní obrazovce pak najde nejlepší spojení domů z místa, kde právě jsi.</p>
+        </Section>
 
         <Section title="Rychlost přesunu na zastávku">
           <div className="grid grid-cols-3 gap-2">

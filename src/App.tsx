@@ -4,7 +4,7 @@ import { JourneyCard, JourneySheet, recommend } from './components/Journeys'
 import { Menu } from './components/Menu'
 import { RideSheet } from './components/RideSheet'
 import { StationPicker } from './components/StationPicker'
-import { Button, IconBus, IconFlag, IconMenu, IconPin, IconRefresh, IconSwap, useNow } from './components/ui'
+import { Button, IconBus, IconFlag, IconHome, IconMenu, IconPin, IconRefresh, IconSwap, useNow } from './components/ui'
 import { getPosition } from './lib/geo'
 import { mergeJourneys, morePage, planJourneys, type Journey, type JourneyPage } from './lib/journeys'
 import { plan, type PlanResult } from './lib/planner'
@@ -96,6 +96,18 @@ export default function App() {
     setPage(null)
     if (dirty) settingsStore.set({ origin: draftOrigin, destination: draftDest })
     else load()
+  }
+
+  /** Nejlepší spojení domů z aktuální polohy. Bez nastaveného domova otevře menu. */
+  const goHome = () => {
+    const home = settings.home
+    if (!home) return setMenuOpen(true)
+    setDraftOrigin(null)
+    setDraftDest(home)
+    if (!settings.origin && samePlace(settings.destination, home)) return load()
+    setPage(null)
+    setResult(null)
+    settingsStore.set({ origin: null, destination: home })
   }
 
   const clearDestination = () => {
@@ -193,9 +205,20 @@ export default function App() {
           </button>
         </div>
 
-        <Button onClick={search} disabled={loading && !dirty} className="mt-3 w-full py-3">
+        <div className="mt-3 flex gap-2">
+  <Button onClick={search} disabled={loading && !dirty} className="flex-1 py-3">
           {loading && !dirty ? 'Hledám…' : draftDest ? 'Vyhledat spoje' : dirty ? 'Zobrazit odjezdy' : 'Aktualizovat odjezdy'}
         </Button>
+          <Button
+            variant="ghost"
+            onClick={goHome}
+            className="px-4 py-3"
+            title={settings.home ? `Domů: ${settings.home.name}` : 'Nastav si domov v menu'}
+            aria-label="Navigovat domů"
+          >
+            <IconHome className="size-5" /> Domů
+          </Button>
+        </div>
       </header>
 
       {/* --- výsledky --- */}

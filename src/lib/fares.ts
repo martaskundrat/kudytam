@@ -99,6 +99,21 @@ export interface BuyAction {
   label: string
   href: string
   hint?: string
+  /** text, který se při klepnutí zkopíruje do schránky (např. stanice pro e-shop ČD) */
+  copy?: string
+  primary?: boolean
+}
+
+/**
+ * IDOS s předvyplněnou trasou a časem (parametry f/t/date/time přijímá v URL).
+ * E-shop ČD ani aplikace Lítačka předvyplnění zvenčí neumožňují.
+ */
+export function idosLink(from: string, to: string, at: number): string {
+  const d = new Date(at)
+  const date = `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`
+  const time = d.toTimeString().slice(0, 5)
+  const q = new URLSearchParams({ f: from, fc: '1', t: to, tc: '1', date, time })
+  return `https://idos.cz/vlakyautobusymhdvse/spojeni/vysledky/?${q}`
 }
 
 export interface FarePart {
@@ -108,7 +123,7 @@ export interface FarePart {
   covers: string
   price: number | null
   estimated?: boolean
-  buy?: BuyAction
+  buy: BuyAction[]
   note?: string
 }
 
@@ -135,7 +150,7 @@ function pidPart(legs: TransitLeg[], settings: Settings, channel: Channel): Fare
   const duration = Math.ceil((legs[legs.length - 1].to.time - legs[0].from.time) / 60000) + BUFFER_MIN
   const d: TicketDecision = chooseTicket(zones, duration, settings.category, settings.coupons)
   const covers = `${describe(legs)} · ${span(legs)}`
-  if (!d.needed) return { title: 'Bez jízdenky PID', covers, price: 0, note: d.reason }
+  if (!d.needed) return { title: 'Bez jízdenky PID', covers, price: 0, note: d.reason, buy: [] }
   const price = d.product.prices[channel]
   if (price === undefined) return null // např. SMS mimo Prahu / pro zlevněné jízdné
   const lit = litackaLink()
@@ -146,8 +161,8 @@ function pidPart(legs: TransitLeg[], settings: Settings, channel: Channel): Fare
     note: d.note,
     buy:
       channel === 'app'
-        ? { label: 'Koupit v PID Lítačce', href: lit.href, hint: lit.hint }
-        : { label: channel === 'sms' ? 'Jak koupit SMS jízdenku' : 'Kde koupit', href: 'https://pid.cz/jizdenky/' },
+        ? [{ label: 'Otevřít PID Lítačku', href: lit.href, hint: `${lit.hint} V aplikaci vyber: ${d.product.name}.`, primary: true }]
+        : [{ label: channel === 'sms' ? 'Jak koupit SMS jízdenku' : 'Kde koupit', href: 'https://pid.cz/jizdenky/' }],
   }
 }
 
@@ -159,7 +174,20 @@ function cdPart(legs: TransitLeg[], settings: Settings): FarePart {
     covers: `vlak ${describe(legs)} · ${span(legs)} · ~${Math.round(km)} km`,
     price: cdFareEstimate(km, settings.category),
     estimated: true,
-    buy: { label: 'E-shop ČD', href: CD_ESHOP, hint: `Zadej ${span(legs)}.` },
+    buy: [
+      {
+        label: 'Vyhledat v IDOS',
+        href: idosLink(legs[0].from.name, legs[legs.length - 1].to.name, legs[0].from.time),
+        hint: `Předvyplněno: ${span(legs)}, odjezd ${new Date(legs[0].from.time).toTimeString().slice(0, 5)}.`,
+        primary: true,
+      },
+      {
+        label: 'E-shop ČD',
+        href: CD_ESHOP,
+        copy: `${legs[0].from.name} → ${legs[legs.length - 1].to.name}`,
+        hint: 'Stanice se zkopírují do schránky – v e-shopu je jen vlož.',
+      },
+    ],
     note: 'Platí jen ve vlacích ČD. Cena je orientační odhad, přesnou ukáže e-shop ČD (včasná jízdenka může být levnější).',
   }
 }
@@ -169,7 +197,7 @@ function otherPart(l: TransitLeg): FarePart {
     title: `Jízdenka dopravce ${l.agency || ''}`.trim(),
     covers: `${l.line} · ${l.from.name} → ${l.to.name}`,
     price: null,
-    buy: l.agencyUrl ? { label: 'Web dopravce', href: l.agencyUrl } : undefined,
+    buy: l.agencyUrl ? [{ label: 'Web dopravce', href: l.agencyUrl }] : [],
   }
 }
 

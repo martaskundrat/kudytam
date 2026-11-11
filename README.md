@@ -74,6 +74,13 @@ Bez klíče aplikace běží na **demo datech** (smyšlené odjezdy).
   (děti, studenti 18–26, senioři 65+). Přesnou cenu ukáže [e-shop ČD](https://www.cd.cz/eshop/).
 - Tlačítko Lítačky na Androidu otevře nainstalovanou aplikaci (intent `cz.dpp.praguepublictransport`,
   jinak Google Play). Na iOS Lítačka nemá veřejný odkaz do aplikace, takže se otevře App Store s tlačítkem „Otevřít“.
+  Konkrétní jízdenku v Lítačce předvybrat nejde (aplikace to zvenčí neumožňuje), proto aplikace ukáže, kterou vybrat.
+- Vlak ČD: tlačítko „Vyhledat v IDOS“ otevře IDOS s předvyplněnou trasou a časem (`f`, `t`, `date`, `time` v URL).
+  E-shop ČD předvyplnění neumí (formulář jejich hlavní stránky odmítá data zvenčí), takže tlačítko „E-shop ČD“ zkopíruje stanice do schránky.
+
+## Domov
+
+V menu si nastavíš domovskou stanici. Tlačítko **Domů** pak vyhledá nejlepší spojení domů z aktuální polohy.
 
 ## Trasa spoje
 

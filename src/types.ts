@@ -89,6 +89,8 @@ export interface Settings {
   customKmh: number
   origin: Place | null
   destination: Place | null
+  /** domov pro tlačítko „Domů“ */
+  home: Place | null
   nearRadius: number
   wideRadius: number
   thresholdMin: number

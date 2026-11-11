@@ -41,6 +41,7 @@ export const settingsStore = createStore<Settings>('kudytam.settings', {
   customKmh: 5,
   origin: null,
   destination: null,
+  home: null,
   nearRadius: 400,
   wideRadius: 1200,
   thresholdMin: 10,
