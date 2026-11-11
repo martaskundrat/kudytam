@@ -35,11 +35,12 @@ export function Menu({ open, onClose, liveData }: { open: boolean; onClose: () =
         <Section title="Domov">
           <div className="rounded-xl bg-highlight">
             <StationPicker
-              label="Domovská stanice"
+              label="Domov"
               icon={<IconHome />}
               value={s.home}
-              emptyLabel="Nastav stanici u domova"
-              placeholder="Stanice u domova"
+              emptyLabel="Nastav adresu nebo stanici"
+              placeholder="Adresa domova nebo stanice"
+              addresses
               onChange={(home) => set({ home })}
             />
           </div>

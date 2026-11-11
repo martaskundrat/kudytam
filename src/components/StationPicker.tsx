@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { searchAddresses } from '../lib/geocode'
 import { loadStations, searchStations } from '../lib/stations'
 import type { LatLon, Place } from '../types'
 import { IconClose, IconPin } from './ui'
@@ -13,11 +14,13 @@ interface Props {
   emptyLabel: string
   /** nabídnout „Moje poloha“ (null) jako volbu */
   allowCurrent?: boolean
+  /** hledat i adresy a místa (nejen stanice PID) */
+  addresses?: boolean
   near?: LatLon | null
   onChange: (p: Place | null) => void
 }
 
-export function StationPicker({ label, icon, value, placeholder, emptyLabel, allowCurrent, near, onChange }: Props) {
+export function StationPicker({ label, icon, value, placeholder, emptyLabel, allowCurrent, addresses, near, onChange }: Props) {
   const [open, setOpen] = useState(false)
   return (
     <>
@@ -26,6 +29,7 @@ export function StationPicker({ label, icon, value, placeholder, emptyLabel, all
         <span className="min-w-0 flex-1">
           <span className="block text-[10px] font-bold tracking-wider text-subtle uppercase">{label}</span>
           <span className={`block truncate font-semibold ${value ? '' : 'text-muted'}`}>{value?.name ?? emptyLabel}</span>
+          {value?.detail && addresses && <span className="block truncate text-xs text-subtle">{value.detail}</span>}
         </span>
         {value && (
           <span
@@ -45,6 +49,7 @@ export function StationPicker({ label, icon, value, placeholder, emptyLabel, all
         <SearchOverlay
           placeholder={placeholder}
           emptyLabel={allowCurrent ? emptyLabel : null}
+          addresses={!!addresses}
           near={near}
           onClose={() => setOpen(false)}
           onPick={(p) => {
@@ -60,12 +65,14 @@ export function StationPicker({ label, icon, value, placeholder, emptyLabel, all
 function SearchOverlay({
   placeholder,
   emptyLabel,
+  addresses,
   near,
   onClose,
   onPick,
 }: {
   placeholder: string
   emptyLabel: string | null
+  addresses: boolean
   near?: LatLon | null
   onClose: () => void
   onPick: (p: Place | null) => void
@@ -74,6 +81,25 @@ function SearchOverlay({
   const [results, setResults] = useState<Place[]>([])
   const [error, setError] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
+  const [addr, setAddr] = useState<Place[]>([])
+  const [addrLoading, setAddrLoading] = useState(false)
+
+  // adresy: s prodlevou, ať se neptáme při každém písmenu
+  useEffect(() => {
+    if (!addresses || q.trim().length < 3) return setAddr([])
+    const ctrl = new AbortController()
+    const t = setTimeout(() => {
+      setAddrLoading(true)
+      searchAddresses(q, near, ctrl.signal)
+        .then(setAddr)
+        .catch(() => !ctrl.signal.aborted && setAddr([]))
+        .finally(() => !ctrl.signal.aborted && setAddrLoading(false))
+    }, 350)
+    return () => {
+      clearTimeout(t)
+      ctrl.abort()
+    }
+  }, [q, near, addresses])
 
   useEffect(() => {
     loadStations()
@@ -126,8 +152,13 @@ function SearchOverlay({
         )}
         {error && <li className="px-4 py-3 text-sm text-red-400">{error}</li>}
         {!ready && !error && q.length >= 2 && <li className="px-4 py-3 text-sm text-subtle">Načítám stanice…</li>}
-        {ready && q.trim().length >= 2 && results.length === 0 && <li className="px-4 py-3 text-sm text-subtle">Žádná stanice PID nenalezena.</li>}
-        {q.trim().length < 2 && <li className="px-4 py-3 text-sm text-subtle">Napiš aspoň 2 písmena názvu stanice.</li>}
+        {ready && q.trim().length >= 2 && results.length === 0 && (!addresses || (!addrLoading && addr.length === 0)) && (
+          <li className="px-4 py-3 text-sm text-subtle">{addresses ? 'Nic nenalezeno.' : 'Žádná stanice PID nenalezena.'}</li>
+        )}
+        {q.trim().length < 2 && (
+          <li className="px-4 py-3 text-sm text-subtle">{addresses ? 'Napiš adresu (ulice a číslo) nebo název stanice.' : 'Napiš aspoň 2 písmena názvu stanice.'}</li>
+        )}
+        {addresses && results.length > 0 && <li className="px-4 pt-2 pb-1 text-[11px] font-bold tracking-wider text-subtle uppercase">Stanice</li>}
         {results.map((r) => (
           <li key={r.name}>
             <button onClick={() => onPick(r)} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-highlight">
@@ -141,6 +172,21 @@ function SearchOverlay({
             </button>
           </li>
         ))}
+        {addresses && (addr.length > 0 || addrLoading) && (
+          <li className="px-4 pt-3 pb-1 text-[11px] font-bold tracking-wider text-subtle uppercase">Adresy {addrLoading && '· hledám…'}</li>
+        )}
+        {addr.map((r) => (
+          <li key={`a-${r.lat}-${r.lon}`}>
+            <button onClick={() => onPick(r)} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-highlight">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-highlight text-lg">🏠</span>
+              <span className="min-w-0">
+                <span className="block truncate font-semibold">{r.name}</span>
+                {r.detail && <span className="block truncate text-xs text-subtle">{r.detail}</span>}
+              </span>
+            </button>
+          </li>
+        ))}
+        {addresses && addr.length > 0 && <li className="px-4 pt-2 text-[10px] text-subtle">Adresy © OpenStreetMap contributors</li>}
       </ul>
     </div>
   )

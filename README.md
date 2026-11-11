@@ -80,7 +80,7 @@ Bez klíče aplikace běží na **demo datech** (smyšlené odjezdy).
 
 ## Domov
 
-V menu si nastavíš domovskou stanici. Tlačítko **Domů** pak vyhledá nejlepší spojení domů z aktuální polohy.
+V menu si nastavíš domov – konkrétní adresu (vyhledávání Transitous /geocode nad OpenStreetMap) nebo stanici. Tlačítko **Domů** pak vyhledá nejlepší spojení domů z aktuální polohy.
 
 ## Trasa spoje
 
