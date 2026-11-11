@@ -30,6 +30,26 @@ export default defineConfig(({ mode }) => {
           rewrite: (p) => p.replace(/^\/api\/transitous/, '/api/v1'),
           headers: { 'User-Agent': 'Kudytam/1.0-dev (+https://github.com/martaskundrat/kudytam)' },
         },
+        // napodobuje netlify/edge-functions/fares.ts
+        '/api/fares/regiojet/locations': {
+          target: 'https://brn-ybus-pubapi.sa.cz',
+          changeOrigin: true,
+          rewrite: (p) => p.replace(/^\/api\/fares\/regiojet\/locations/, '/restapi/consts/locations'),
+          headers: { 'X-Lang': 'cs' },
+          configure: (proxy) => proxy.on('proxyReq', (r) => r.removeHeader('origin')),
+        },
+        '/api/fares/regiojet/routes': {
+          target: 'https://brn-ybus-pubapi.sa.cz',
+          changeOrigin: true,
+          rewrite: (p) => p.replace(/^\/api\/fares\/regiojet\/routes/, '/restapi/routes/search/simple'),
+          headers: { 'X-Lang': 'cs', 'X-Currency': 'CZK' },
+          configure: (proxy) => proxy.on('proxyReq', (r) => r.removeHeader('origin')),
+        },
+        '/api/fares/flixbus/search': {
+          target: 'https://global.api.flixbus.com',
+          changeOrigin: true,
+          rewrite: (p) => p.replace(/^\/api\/fares\/flixbus\/search/, '/search/service/v4/search'),
+        },
         '/api/golemio/v2': {
           target: 'https://api.golemio.cz',
           changeOrigin: true,

@@ -2,7 +2,9 @@ import { Fragment, useEffect, useRef, useState, type TouchEvent } from 'react'
 import { formatDistance } from '../lib/geo'
 import { fetchTrip, firstWalk, shiftLeg, transitLegs, tripPosition, type Journey, type TransitLeg, type TripDetail } from '../lib/journeys'
 import { settingsStore, speedKmh, useStore } from '../lib/store'
-import { fareOptions } from '../lib/fares'
+import { carrierQuote, legKey, quotable } from '../lib/carriers'
+import { fareOptions, type Quotes } from '../lib/fares'
+import type { PassengerCategory } from '../types'
 import { FareComparison } from './FareComparison'
 import { fmtKc, fmtTime, IconSparkle, IconWalk, LineBadge, Sheet, useNow, VEHICLE_LABEL } from './ui'
 
@@ -25,6 +27,26 @@ export function recommend(journeys: Journey[], nearRadius: number, now: number):
   const bestNear = live.filter(isNear).reduce<Journey | null>((a, b) => (!a || b.end < a.end ? b : a), null)
   const farStop = !isNear(best)
   return { journey: best, farStop, savedMin: farStop && bestNear ? Math.round((bestNear.end - best.end) / 60000) : null }
+}
+
+/**
+ * Živé ceny dopravců (FlixBus, RegioJet) pro úseky spojení. Dotazy se sdílejí v cache
+ * (jeden dotaz = všechny spoje dne mezi dvěma stanicemi), takže karty seznamu nezatěžují API.
+ */
+function useQuotes(j: Journey | null, category: PassengerCategory): Quotes | undefined {
+  const [quotes, setQuotes] = useState<{ key: string; q: Quotes } | null>(null)
+  const legs = j ? transitLegs(j).filter(quotable) : []
+  const key = legs.map(legKey).join('|') + '#' + category
+  useEffect(() => {
+    if (!legs.length) return
+    let alive = true
+    Promise.all(legs.map((l) => carrierQuote(l, category).then((r) => [legKey(l), r] as const))).then((e) => alive && setQuotes({ key, q: new Map(e) }))
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+  return quotes?.key === key ? quotes.q : undefined
 }
 
 const leaveLabel = (j: Journey, now: number) => {
@@ -56,7 +78,8 @@ function LegChips({ j }: { j: Journey }) {
 
 export function JourneyCard({ j, now, pick, onSelect }: { j: Journey; now: number; pick?: JourneyPick | null; onSelect: (j: Journey) => void }) {
   const settings = useStore(settingsStore)
-  const cheapest = fareOptions(j, settings)[0]
+  const quotes = useQuotes(j, settings.category)
+  const cheapest = fareOptions(j, settings, quotes)[0]
   const firstTransit = transitLegs(j)[0]
   const missed = j.start < now - 30000
   const recommended = pick?.journey.id === j.id
@@ -157,9 +180,10 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!journey])
 
-  if (!journey) return null
-  const shown = override?.baseId === journey.id ? override.j : journey
-  const fares = fareOptions(shown, settings)
+  const shown = journey ? (override?.baseId === journey.id ? override.j : journey) : null
+  const quotes = useQuotes(shown, settings.category)
+  if (!journey || !shown) return null
+  const fares = fareOptions(shown, settings, quotes)
   const departed = shown.start < now - 30000
   const dest = settings.destination
 

@@ -69,7 +69,7 @@ export function BikeCards({
         const arrival = now + o.totalMin * 60000
         const faster = arrival < bestTransitEnd(journeys, now)
         return (
-          <div key={o.brand} className={`rounded-2xl p-4 ${faster ? 'bg-gradient-to-br from-brand/25 to-surface ring-1 ring-brand' : 'bg-surface'}`}>
+          <div key={o.systemId} className={`rounded-2xl p-4 ${faster ? 'bg-gradient-to-br from-brand/25 to-surface ring-1 ring-brand' : 'bg-surface'}`}>
             {faster && (
               <div className="mb-2 flex items-center gap-1 text-[11px] font-bold tracking-wider text-brand uppercase">
                 <IconSparkle className="size-3.5" /> Na kole jsi tam dřív než MHD
@@ -77,7 +77,7 @@ export function BikeCards({
             )}
             <div className="flex items-baseline justify-between gap-2">
               <div className="flex items-center gap-2 text-xl font-extrabold">
-                <IconBike className="size-6" /> Sdílené kolo · {o.brand}
+                <IconBike className="size-6" /> Sdílené kolo · {o.brand} {o.area}
               </div>
               <div className="shrink-0 font-bold text-muted">~{o.totalMin} min</div>
             </div>

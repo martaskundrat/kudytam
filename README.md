@@ -78,6 +78,22 @@ Bez klíče aplikace běží na **demo datech** (smyšlené odjezdy).
 - Vlak ČD: tlačítko „Vyhledat v IDOS“ otevře IDOS s předvyplněnou trasou a časem (`f`, `t`, `date`, `time` v URL).
   E-shop ČD předvyplnění neumí (formulář jejich hlavní stránky odmítá data zvenčí), takže tlačítko „E-shop ČD“ zkopíruje stanice do schránky.
 
+### Dopravci po celé ČR
+
+`src/lib/carriers.ts`. Úseky mimo PID a ČD se rozpoznají podle dopravce (Transitous `agencyName`, `agencyId`, ID zastávky):
+- **FlixBus** – živá cena konkrétního spoje (veřejné vyhledávání FlixBusu podle ID stanic, která posílá Transitous),
+  včetně poplatku za rezervaci, pro dospělého. **Koupit u FlixBus** otevře e-shop s předvyplněnými stanicemi a datem.
+- **RegioJet** (vlaky i autobusy, v datech i jako STUDENT AGENCY) – veřejné API RegioJetu, cena „od“ (nejlevnější třída)
+  podle tarifu z menu: student 18–26, mladistvý, dítě, senior 65+ a ZTP mají státní slevu 50 %.
+  Stanice se párují podle čísla SR70 (vlaky) nebo polohy do 500 m (autobusy). **Koupit u RegioJet** otevře regiojet.cz s trasou a datem.
+- **Ostatní** (Leo Express, Arriva, ZSSK, krajští dopravci, MHD mimo PID – např. IDS JMK v Brně): web dopravce a IDOS
+  s předvyplněnou trasou a časem. Cenu ukáže dopravce.
+
+RegioJet odmítá dotazy z prohlížeče cizích webů, proto ceny jdou přes edge funkci `netlify/edge-functions/fares.ts`
+(`/api/fares/*`, jen povolené cesty, cache 5 min, seznam stanic 24 h).
+Dálkové spoje, které jen projíždějí pásmy PID (rychlík do Brna), a komerční dopravci (FlixBus, RegioJet, Leo Express)
+se nepočítají jako PID – jízdenka PID na ně neplatí.
+
 ## Cíl: stanice, adresa nebo GPS
 
 V kolonce **Kam** (a u domova) jde zadat stanici PID, adresu (Transitous /geocode nad OpenStreetMap) nebo GPS souřadnice:
@@ -96,18 +112,21 @@ se srovnáním příjezdu s nejrychlejší MHD a tlačítkem **Navigovat**. Otev
 Tlačítkem **Vypnout rozšířené vyhledávání** nad výsledky se tyhle karty skryjí a Transitous se přestane ptát na trasu autem.
 Volba se pamatuje.
 
-- **Sdílené kolo – nextbike** (Praha, Říčany): živý [GBFS feed nextbike](https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_tg/gbfs.json) (CC0).
+- **Sdílené kolo – nextbike, celá ČR** (40 systémů: Praha a Říčany, Brno, Ostrava, Hradec Králové, Olomoucko, Zlín…):
+  živý [GBFS feed nextbike](https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_tg/gbfs.json) (CC0). Seznam systémů s oblastí stanic
+  je v `src/lib/bike-systems.ts` (`npm run bikes` ho obnoví); načte se jen GBFS systému, v jehož oblasti je start i cíl.
   Hledá stanici s volným kolem v „širším okolí“ startu a stanici s volným stojanem u cíle a vybere nejrychlejší kombinaci.
   Kolo se nabídne, jen když je na stojanu opravdu: počet ve `station_status` musí potvrdit i seznam kol ve `free_bike_status`
   (bez rezervovaných a vyřazených), feed nesmí být starší než 10 min a stanice se musela ozvat v posledních 2 h.
-  Cena se počítá z ceníku GBFS (`system_pricing_plans`) podle regionu stanice (Praha 39 Kč / 30 min, Říčany 35 Kč / 30 min).
-  Minuty zdarma (`freeRides`, podle `region_id` stanice; jízda musí začít i skončit v regionu):
+  Cena se počítá z ceníku GBFS (`system_pricing_plans`) podle regionu stanice (Praha 39 Kč / 30 min, Říčany 35 Kč / 30 min,
+  Brno 35 Kč / 30 min, Ostrava 25 Kč…). Města, která mají minuty zdarma přímo v ceníku GBFS, se počítají sama.
+  Minuty zdarma navíc (`FREE_RIDES`, podle `region_id` stanice):
   - Praha: prvních 15 min 2× denně pro předplatitele kupónu PID na Prahu v Lítačce ([PID](https://pid.cz/cykliste-v-pid/sdilena-kola/)).
     Počítá se jen tehdy, když máš v menu aplikace zadaný aktivní kupón na Prahu.
   - Říčany: prvních 15 min zdarma pro všechny (podle stanice, kde si kolo půjčíš), cena se ukáže jako 0 Kč.
   Zbytek jízdy se platí podle ceníku poskytovatele.
   Tlačítko otevře aplikaci nextbike přímo na stanici (`rental_uris`), navigace na kole vede přes Mapy.com.
-  Další systém stačí přidat do `BIKE_SYSTEMS`, pokud má veřejný GBFS se stanicemi. Rekola a Bolt veřejný feed nemají.
+  Rekola a Bolt veřejný feed nemají.
 - **Taxi – Uber, Bolt, Liftago**: čas a vzdálenost jízdy autem počítá Transitous (`directModes=WALK,CAR`,
   `fastestDirectFactor=100`, jinak by zahodil spojení MHD pomalejší než auto). Počítá se s ~6 min na přistavení vozu.
   Cena je **orientační rozpětí**, protože aplikace ceník nezveřejňují. Horní mez = maximální cena taxi v Praze

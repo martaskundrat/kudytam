@@ -12,7 +12,13 @@ function Part({ p }: { p: FarePart }) {
       <div className="flex items-baseline justify-between gap-3">
         <span className="font-semibold">{p.title}</span>
         <span className="shrink-0 font-bold">
-          {p.price === null ? <span className="font-normal text-subtle">cena u dopravce</span> : p.price === 0 ? 'zdarma' : `${p.estimated ? '~' : ''}${fmtKc(p.price)}`}
+          {p.price === null ? (
+            <span className="font-normal text-subtle">cena u dopravce</span>
+          ) : p.price === 0 ? (
+            'zdarma'
+          ) : (
+            `${p.priceFrom ? 'od ' : ''}${p.estimated ? '~' : ''}${fmtKc(p.price)}`
+          )}
         </span>
       </div>
       <p className="mt-0.5 text-xs text-subtle">{p.covers}</p>

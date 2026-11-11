@@ -2,14 +2,16 @@
  * Rozšířené vyhledávání: sdílená kola (GBFS) a taxi / odvoz přes aplikace.
  *
  * Sdílená kola – živá data GBFS (stanice, volná kola, volná stojany, ceník):
- *   nextbike Praha + Říčany (system_id nextbike_tg), https://gbfs.nextbike.net – CC0, CORS povolené.
- *   Další systémy stačí přidat do BIKE_SYSTEMS (musí mít veřejný GBFS 2.x se stanicemi).
+ *   všechny systémy nextbike v ČR (seznam s oblastmi v bike-systems.ts, `npm run bikes`),
+ *   https://gbfs.nextbike.net – CC0, CORS povolené. Načte se jen GBFS systému, v jehož oblasti je start i cíl.
+ *   Ceníky jednotlivých měst (i minuty zdarma, např. Ostrava) jsou přímo v GBFS system_pricing_plans.
  *
  * Taxi – čas a vzdálenost jízdy autem počítá Transitous (`directModes=CAR`).
  * Cena je ORIENTAČNÍ ROZPĚTÍ: Uber, Bolt ani Liftago nezveřejňují ceník, cenu ukážou až v aplikaci
  * (u Liftaga je cena sjednaná předem). Horní mez = maximální cena taxi v Praze podle cenového výměru
  * hl. m. Prahy č. 3/2026 (70 Kč nástupní + 42 Kč/km), dolní mez je odhad podle běžných cen aplikací.
  */
+import { NEXTBIKE_CZ } from './bike-systems'
 import { appLink, type AppLink } from './fares'
 import { distanceM, travelMinutes } from './geo'
 import { isCouponActive } from './tickets'
@@ -21,7 +23,10 @@ interface BikeSystem {
   id: string
   /** značka, jak ji zná uživatel */
   brand: string
+  /** město / oblast systému */
+  area: string
   gbfs: string
+  bbox: [number, number, number, number]
   app: { android: string; ios: string; web: string }
   /** minuty zdarma (podle regionu stanice v GBFS system_regions) */
   freeRides?: FreeRide[]
@@ -50,13 +55,14 @@ const NB_RICANY = ['736']
 /** elektronický předplatní kupón PID na Prahu (Lítačka) */
 const hasPragueCoupon = (r: Rider) => r.coupons.some((c) => isCouponActive(c) && (c.type === 'litacka-praha' || c.zones.includes('P')))
 
-export const BIKE_SYSTEMS: BikeSystem[] = [
-  {
-    id: 'nextbike_tg',
-    brand: 'nextbike',
-    gbfs: 'https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_tg/cs',
-    app: { android: 'de.nextbike', ios: 'https://apps.apple.com/cz/app/nextbike/id504288371', web: 'https://www.nextbikeczech.com/' },
-    freeRides: [
+const NEXTBIKE_APP = { android: 'de.nextbike', ios: 'https://apps.apple.com/cz/app/nextbike/id504288371', web: 'https://www.nextbikeczech.com/' }
+
+/**
+ * Minuty zdarma, které nejsou v ceníku GBFS (akce měst a PID). Ostatní města mají případné
+ * minuty zdarma přímo v ceníku GBFS.
+ */
+const FREE_RIDES: Record<string, FreeRide[]> = {
+  nextbike_tg: [
       {
         // https://pid.cz/cykliste-v-pid/sdilena-kola/ – 2× denně 15 min pro předplatitele kupónu na Prahu v Lítačce;
         // jen s kupónem na Prahu zadaným v menu aplikace
@@ -73,9 +79,26 @@ export const BIKE_SYSTEMS: BikeSystem[] = [
         applies: () => true,
         note: 'V Říčanech je prvních 15 min jízdy zdarma.',
       },
-    ],
-  },
-]
+  ],
+}
+
+export const BIKE_SYSTEMS: BikeSystem[] = NEXTBIKE_CZ.map((s) => ({
+  id: s.id,
+  brand: 'nextbike',
+  area: s.name,
+  gbfs: s.gbfs,
+  bbox: s.bbox,
+  app: NEXTBIKE_APP,
+  freeRides: FREE_RIDES[s.id],
+}))
+
+/** je bod v oblasti systému (rozšířené o docházkovou vzdálenost)? */
+const inArea = (sys: BikeSystem, p: LatLon, radius: number) => {
+  const dLat = radius / 111320
+  const dLon = radius / (111320 * Math.cos((p.lat * Math.PI) / 180))
+  const [a, b, c, d] = sys.bbox
+  return p.lat >= a - dLat && p.lat <= c + dLat && p.lon >= b - dLon && p.lon <= d + dLon
+}
 
 interface GbfsStation {
   id: string
@@ -206,7 +229,9 @@ const CANDIDATES = 8
 const MIN_RIDE_M = 400
 
 export interface BikeOption {
+  systemId: string
   brand: string
+  area: string
   from: GbfsStation & { walkMin: number; walkM: number }
   to: GbfsStation & { walkMin: number; walkM: number }
   rideMin: number
@@ -234,7 +259,7 @@ const nearest = (list: GbfsStation[], p: LatLon, radius: number) =>
 export async function bikeOptions(origin: LatLon, dest: LatLon, walkKmh: number, radius: number, rider: Rider): Promise<BikeOption[]> {
   const out: BikeOption[] = []
   const walkOnly = travelMinutes(distanceM(origin, dest), walkKmh)
-  for (const sys of BIKE_SYSTEMS) {
+  for (const sys of BIKE_SYSTEMS.filter((s) => inArea(s, origin, radius) && inArea(s, dest, radius))) {
     let data: SystemData
     try {
       data = await system(sys)
@@ -262,7 +287,9 @@ export async function bikeOptions(origin: LatLon, dest: LatLon, walkKmh: number,
         )
         const freeMin = free?.minutes ?? 0
         best = {
+          systemId: sys.id,
           brand: sys.brand,
+          area: sys.area,
           from: { ...a.s, walkMin: Math.round(wa), walkM: Math.round(a.d * 1.3) },
           to: { ...b.s, walkMin: Math.round(wb), walkM: Math.round(b.d * 1.3) },
           rideMin,

@@ -45,6 +45,7 @@ export interface TransitLeg {
   zones: string[]
   isPid: boolean
   agency: string
+  agencyId?: string
   agencyUrl?: string
   /** dopravce pro účely jízdného: vlaky PID (S, R) jezdí převážně ČD */
   operator: 'pid' | 'cd' | 'other'
@@ -93,6 +94,8 @@ function operatorOf(l: any, vehicle: VehicleType): TransitLeg['operator'] {
   if (vehicle === 'train' && !agency) return 'cd'
   return 'other'
 }
+/** dopravci, u kterých jízdenka PID neplatí ani na území PID */
+const NON_PID_AGENCY = /flixbus|regiojet|student agency|leo ?express|železničná spoločnosť slovensko|ÖBB|deutsche bahn/i
 const PID_PREFIX = 'cz-PID_'
 const gtfsOf = (stopId?: string) => (stopId?.startsWith(PID_PREFIX) ? stopId.slice(PID_PREFIX.length) : undefined)
 
@@ -165,10 +168,16 @@ async function parse(data: any, origin: LatLon & { name?: string }, dest: Place)
       const ids = [l.from?.stopId, ...(l.intermediateStops ?? []).map((s: any) => s.stopId), l.to?.stopId].map(gtfsOf)
       const zones = new Set<string>()
       for (const id of ids) if (id) zonesOf(id)?.forEach((z) => zones.add(z))
+      let pid = zones.size > 0
       if (!zones.size) {
         // úsek z jiné datové sady (např. vlak v celostátních datech) – pásma podle polohy zastávek
         for (const p of [l.from, ...(l.intermediateStops ?? []), l.to]) zonesAt(p)?.forEach((z) => zones.add(z))
+        // na jízdenku PID jen tehdy, když úsek začíná i končí v PID (rychlík do Brna jen projíždí pásma)
+        pid = !!zonesAt(l.from)?.length && !!zonesAt(l.to)?.length
       }
+      // komerční dálkoví dopravci jízdenky PID neuznávají
+      if (NON_PID_AGENCY.test(`${l.agencyName ?? ''} ${l.from?.stopId ?? ''}`)) pid = false
+      if (!pid) zones.clear()
       const delay = l.realTime ? Math.round((from.time - from.scheduled) / 60000) : null
       return {
         kind: 'transit',
@@ -184,8 +193,9 @@ async function parse(data: any, origin: LatLon & { name?: string }, dest: Place)
         cancelled: !!l.cancelled,
         wheelchair: !!l.wheelchairAccessible,
         zones: [...zones],
-        isPid: zones.size > 0,
+        isPid: pid,
         agency: l.agencyName ?? '',
+        agencyId: l.agencyId ?? undefined,
         agencyUrl: l.agencyUrl ?? undefined,
         operator: operatorOf(l, MODE[l.mode] ?? 'other'),
         tripId: l.tripId ?? undefined,

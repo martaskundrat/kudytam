@@ -7,6 +7,7 @@
  * proto se interpoluje z cen pro vybrané vzdálenosti, které ČD zveřejnily k jízdnímu
  * řádu 2026 (25 km 68 Kč, 100 km 221 Kč, 250 km 527 Kč). Přesnou cenu ukáže e-shop ČD.
  */
+import { carrierOf, legKey, type CarrierQuote } from './carriers'
 import { distanceM } from './geo'
 import type { Journey, Leg, TransitLeg } from './journeys'
 import { chooseTicket, type TicketDecision } from './tickets'
@@ -136,6 +137,8 @@ export interface FarePart {
   covers: string
   price: number | null
   estimated?: boolean
+  /** cena „od“ (nejlevnější třída / tarif) */
+  priceFrom?: boolean
   buy: BuyAction[]
   note?: string
 }
@@ -205,12 +208,34 @@ function cdPart(legs: TransitLeg[], settings: Settings): FarePart {
   }
 }
 
-function otherPart(l: TransitLeg): FarePart {
+/** živé ceny dopravců (FlixBus, RegioJet) podle legKey – načítají se asynchronně */
+export type Quotes = Map<string, CarrierQuote | null>
+
+/**
+ * Úsek mimo PID a ČD: jízdenka u dopravce. FlixBus a RegioJet mají živou cenu a e-shop
+ * s předvyplněnou trasou; ostatní web dopravce a IDOS s trasou a časem.
+ */
+function otherPart(l: TransitLeg, quotes?: Quotes): FarePart {
+  const c = carrierOf(l)
+  const q = quotes?.get(legKey(l))
+  const covers = `${l.line} · ${l.from.name} → ${l.to.name}`
+  const idos: BuyAction = {
+    label: 'Vyhledat v IDOS',
+    href: idosLink(l.from.name, l.to.name, l.from.scheduled),
+    hint: `IDOS s předvyplněnou trasou ${l.from.name} → ${l.to.name}, odjezd ${new Date(l.from.scheduled).toTimeString().slice(0, 5)}.`,
+  }
+  const buy: BuyAction[] = []
+  if (q) buy.push({ label: `Koupit u ${c.name}`, href: q.href, hint: 'Otevře e-shop dopravce s předvyplněnou trasou a datem – vyber spoj a zaplať.', primary: true })
+  else if (c.web) buy.push({ label: c.id === 'other' ? 'Web dopravce' : `E-shop ${c.name}`, href: c.web, copy: `${l.from.name} → ${l.to.name}`, primary: c.id !== 'other' })
+  // bez přímého nákupu u dopravce aspoň IDOS s trasou (u FlixBusu bývají názvy stanic anglicky – IDOS je nenajde)
+  if (!q) buy.push(idos)
   return {
-    title: `Jízdenka dopravce ${l.agency || ''}`.trim(),
-    covers: `${l.line} · ${l.from.name} → ${l.to.name}`,
-    price: null,
-    buy: l.agencyUrl ? [{ label: 'Web dopravce', href: l.agencyUrl }] : [],
+    title: `Jízdenka ${c.name}`,
+    covers,
+    price: q ? q.price : null,
+    priceFrom: q?.from,
+    buy,
+    note: q?.note ?? (quotes?.has(legKey(l)) || c.id === 'other' ? 'Cenu ukáže dopravce – v jeho e-shopu, aplikaci nebo u řidiče.' : undefined),
   }
 }
 
@@ -241,14 +266,14 @@ const make = (id: string, label: string, parts: (FarePart | null)[]): FareOption
   }
 }
 
-export function fareOptions(j: Journey, settings: Settings): FareOption[] {
+export function fareOptions(j: Journey, settings: Settings, quotes?: Quotes): FareOption[] {
   const legs = j.legs.filter((l): l is TransitLeg => l.kind === 'transit')
   const pidLegs = legs.filter((l) => l.isPid)
   const foreign = legs.filter((l) => !l.isPid)
   const foreignParts = (cdOk: boolean) => {
     // úseky mimo PID: ČD nacenit odhadem, ostatní jen odkázat
     const cd = groups(foreign, (l) => (cdOk && l.operator === 'cd' ? 'cd' : null))
-    return [...cd.map((g) => cdPart(g.legs, settings)), ...foreign.filter((l) => !(cdOk && l.operator === 'cd')).map(otherPart)]
+    return [...cd.map((g) => cdPart(g.legs, settings)), ...foreign.filter((l) => !(cdOk && l.operator === 'cd')).map((l) => otherPart(l, quotes))]
   }
 
   const options: (FareOption | null)[] = []
@@ -269,7 +294,7 @@ export function fareOptions(j: Journey, settings: Settings): FareOption[] {
     for (const g of groups(legs, (l) => (trainOk(l) ? 'cd' : l.isPid ? 'pid' : 'other'))) {
       if (g.key === 'cd') parts.push(cdPart(g.legs, settings))
       else if (g.key === 'pid') parts.push(pidPart(g.legs, settings, 'app'))
-      else parts.push(...g.legs.map(otherPart))
+      else parts.push(...g.legs.map((l) => otherPart(l, quotes)))
     }
     options.push(make('cd-mix', 'Vlak s jízdenkou ČD + MHD s PID', parts))
   }

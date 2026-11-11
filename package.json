@@ -5,7 +5,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "stops": "node scripts/build-stops.mjs"
+    "stops": "node scripts/build-stops.mjs",
+    "bikes": "node scripts/build-bike-systems.mjs"
   },
   "license": "MIT",
   "type": "module",
