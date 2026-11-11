@@ -6,7 +6,8 @@ import { carrierQuote, legKey, quotable } from '../lib/carriers'
 import { fareOptions, type Quotes } from '../lib/fares'
 import type { PassengerCategory } from '../types'
 import { FareComparison } from './FareComparison'
-import { fmtKc, fmtTime, IconSparkle, IconWalk, LineBadge, Sheet, useNow, VEHICLE_LABEL } from './ui'
+import type { BikeOption } from '../lib/mobility'
+import { fmtKc, fmtTime, IconBike, IconSparkle, IconWalk, LineBadge, Sheet, useNow, VEHICLE_LABEL } from './ui'
 
 export interface JourneyPick {
   journey: Journey
@@ -23,7 +24,11 @@ export function recommend(journeys: Journey[], nearRadius: number, now: number):
   const live = journeys.filter((j) => j.start >= now - 30000 && !transitLegs(j).some((l) => l.cancelled))
   if (!live.length) return null
   const best = live.reduce((a, b) => (b.end < a.end || (b.end === a.end && b.transfers < a.transfers) ? b : a))
-  const isNear = (j: Journey) => (firstWalk(j)?.meters ?? 0) <= nearRadius * 1.3
+  // u sdíleného kola se počítá jen chůze ke stojanu
+  const isNear = (j: Journey) => {
+    const w = firstWalk(j)
+    return (w?.bike ? w.bike.from.walkM : (w?.meters ?? 0)) <= nearRadius * 1.3
+  }
   const bestNear = live.filter(isNear).reduce<Journey | null>((a, b) => (!a || b.end < a.end ? b : a), null)
   const farStop = !isNear(best)
   return { journey: best, farStop, savedMin: farStop && bestNear ? Math.round((bestNear.end - best.end) / 60000) : null }
@@ -61,7 +66,12 @@ function LegChips({ j }: { j: Journey }) {
         <Fragment key={i}>
           {i > 0 && <span className="text-xs text-subtle">›</span>}
           {l.kind === 'walk' ? (
-            l.durationMin >= 1 ? (
+            l.bike ? (
+              <span className="inline-flex items-center gap-0.5 rounded-md bg-brand/20 px-1 text-xs font-bold text-brand">
+                <IconBike className="size-3.5" />
+                {l.durationMin}
+              </span>
+            ) : l.durationMin >= 1 ? (
               <span className="inline-flex items-center gap-0.5 text-xs text-muted">
                 <IconWalk className="size-3.5" />
                 {l.durationMin}
@@ -81,6 +91,7 @@ export function JourneyCard({ j, now, pick, onSelect }: { j: Journey; now: numbe
   const quotes = useQuotes(j, settings.category)
   const cheapest = fareOptions(j, settings, quotes)[0]
   const firstTransit = transitLegs(j)[0]
+  const bikeLeg = firstWalk(j)
   const missed = j.start < now - 30000
   const recommended = pick?.journey.id === j.id
   const delay = firstTransit?.delayMin
@@ -125,6 +136,13 @@ export function JourneyCard({ j, now, pick, onSelect }: { j: Journey; now: numbe
               : `od ${cheapest.estimated ? '~' : ''}${fmtKc(cheapest.total)}${cheapest.incomplete ? ' +' : ''}`}
         </span>
       </div>
+      {bikeLeg?.bike && (
+        <p className="mt-2 text-sm text-brand">
+          Sdíleným kolem {bikeLeg.bike.brand} ze stojanu {bikeLeg.bike.from.name} ({bikeLeg.bike.from.bikes}{' '}
+          {bikeLeg.bike.from.bikes === 1 ? 'kolo' : bikeLeg.bike.from.bikes < 5 ? 'kola' : 'kol'}) k zastávce {firstTransit?.from.name} ·{' '}
+          {bikeLeg.bike.price === null ? 'cena v aplikaci' : fmtKc(bikeLeg.bike.price)}
+        </p>
+      )}
       {recommended && pick.savedMin !== null && pick.savedMin > 0 && (
         <p className="mt-2 text-sm text-brand">
           Dojdi {firstWalk(j)?.durationMin} min na {firstTransit?.from.name} a dorazíš o <b>{pick.savedMin} min</b> dřív než z nejbližší zastávky.
@@ -252,7 +270,9 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
       <ol className="space-y-1">
         {shown.legs.map((l, i) =>
           l.kind === 'walk' ? (
-            l.durationMin < 1 ? null : (
+            l.bike ? (
+              <BikeLegRow key={`b${i}`} bike={l.bike} stop={l.to.name} />
+            ) : l.durationMin < 1 ? null : (
               <li key={`w${i}`} className="flex items-center gap-3 py-1.5 pl-2 text-sm text-muted">
                 <IconWalk className="size-4" />
                 Pěšky {l.durationMin} min{l.meters > 0 && ` · ${formatDistance(l.meters)}`}
@@ -278,6 +298,53 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
       </div>
       <p className="py-5 text-center text-[11px] text-subtle">Klepni na spoj = všechny zastávky · táhni doleva = pozdější spoj · doprava = dřívější</p>
     </Sheet>
+  )
+}
+
+/** Úsek sdíleným kolem v detailu spojení: kde kolo vzít, kam ho vrátit, tlačítko do aplikace. */
+function BikeLegRow({ bike, stop }: { bike: BikeOption; stop: string }) {
+  const nav =
+    'https://mapy.com/fnc/v1/route?' +
+    new URLSearchParams({ mapset: 'outdoor', start: `${bike.from.lon},${bike.from.lat}`, end: `${bike.to.lon},${bike.to.lat}`, routeType: 'bike_road', navigate: 'true' })
+  return (
+    <li className="rounded-2xl bg-surface p-3 text-sm">
+      <div className="flex items-center gap-2 font-semibold">
+        <IconBike className="size-5 text-brand" /> Sdílené kolo {bike.brand} {bike.area}
+        <span className="ml-auto font-bold">{bike.price === null ? '' : fmtKc(bike.price)}</span>
+      </div>
+      <ol className="mt-1.5 space-y-0.5 text-muted">
+        {bike.from.walkMin >= 1 && (
+          <li>
+            Pěšky {bike.from.walkMin} min na stojan <span className="text-white">{bike.from.name}</span>
+          </li>
+        )}
+        <li>
+          {bike.from.walkMin < 1 && <>Ze stojanu <span className="text-white">{bike.from.name}</span> </>}
+          <span className="text-brand">
+            ({bike.from.bikes} {bike.from.bikes === 1 ? 'kolo' : bike.from.bikes < 5 ? 'kola' : 'kol'})
+          </span>{' '}
+          na kole ~{bike.rideMin} min na <span className="text-white">{bike.to.name}</span>
+          {!bike.to.virtual && <span className="text-subtle"> ({bike.to.docks} volných míst)</span>}
+        </li>
+        <li>
+          {bike.to.walkMin >= 1 ? `Pěšky ${bike.to.walkMin} min na zastávku ` : 'Zastávka '}
+          <span className="text-white">{stop}</span>
+        </li>
+      </ol>
+      {bike.freeNote && <p className="mt-1 text-xs text-brand">{bike.freeNote}</p>}
+      <div className="mt-2 flex flex-wrap gap-2">
+        <a
+          href={bike.open.href}
+          {...(bike.open.href.startsWith('intent:') ? {} : { target: '_blank', rel: 'noreferrer' })}
+          className="rounded-full bg-brand px-4 py-2 text-sm font-bold text-black transition hover:bg-brand-hover active:scale-95"
+        >
+          Půjčit v aplikaci {bike.brand}
+        </a>
+        <a href={nav} target="_blank" rel="noreferrer" className="rounded-full px-4 py-2 text-sm font-bold ring-1 ring-zinc-500 transition hover:ring-white active:scale-95">
+          Navigovat na kole
+        </a>
+      </div>
+    </li>
   )
 }
 

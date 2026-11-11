@@ -6,6 +6,7 @@
  * „širšího okolí“, takže vyhledávač sám zváží, jestli se vyplatí dojít dál na rychlejší spoj.
  */
 import type { LatLon, Place, Settings, VehicleType } from '../types'
+import { bikesNear, bikeToStop, type BikeOption } from './mobility'
 import { platformZones, zonesNear } from './stations'
 
 export interface LegStop {
@@ -26,6 +27,8 @@ export interface WalkLeg {
   to: LegStop
   durationMin: number
   meters: number
+  /** první úsek sdíleným kolem (pěšky na stojan, kolem ke stojanu u zastávky, pěšky na nástupiště) */
+  bike?: BikeOption
 }
 
 export interface TransitLeg {
@@ -86,10 +89,15 @@ const MODE: Record<string, VehicleType> = {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const CD_NAME = /(č|c)esk(é|e) dr(á|a)hy/i
+/** česká železniční stanice podle čísla SR70 v ID zastávky (54xxxxx, 55xxxxx) */
+const czStation = (stopId?: string) => /(?:^|\D)5[45]\d{5}(?!\d)/.test(String(stopId ?? ''))
+
 function operatorOf(l: any, vehicle: VehicleType): TransitLeg['operator'] {
   const agency = String(l.agencyName ?? '')
   if (CD_NAME.test(agency)) return 'cd'
   if (String(l.from?.stopId ?? '').startsWith('cz-PID_')) return 'pid'
+  // mezinárodní vlaky ZSSK / ÖBB mezi českými stanicemi (SR70 54…/55…) jedou v ČR v tarifu ČD
+  if (vehicle === 'train' && /slovensko|ÖBB|österreich/i.test(agency) && czStation(l.from?.stopId) && czStation(l.to?.stopId)) return 'cd'
   // vlak z celostátních dat bez uvedeného dopravce – v ČR nejčastěji ČD
   if (vehicle === 'train' && !agency) return 'cd'
   return 'other'
@@ -144,7 +152,7 @@ const fetchPlan = async (query: string, cursor?: string) => {
 
 /** Stabilní ID spojení (stejné i po obnovení dat) – podle linek a plánovaných odjezdů. */
 const journeyKey = (j: Journey) =>
-  j.legs.map((l) => (l.kind === 'transit' ? `${l.line}@${l.from.scheduled}` : 'w')).join('|')
+  j.legs.map((l) => (l.kind === 'transit' ? `${l.line}@${l.from.scheduled}` : l.bike ? `b:${l.bike.systemId}` : 'w')).join('|')
 
 /** Sloučí spojení (např. z více stránek), bez duplicit, seřazená podle odjezdu. */
 export function mergeJourneys(...lists: Journey[][]): Journey[] {
@@ -256,6 +264,8 @@ export async function planJourneys(origin: LatLon & { name?: string }, dest: Pla
     numItineraries: '6',
     maxItineraries: '10',
   }).toString()
+  // s rozšířeným vyhledáváním zároveň spojení se sdíleným kolem na začátek cesty
+  const bikeFirst = extended ? bikeFirstJourneys(origin, dest, kmh, maxPre, settings).catch(() => []) : Promise.resolve([])
   const data = await fetchPlan(query)
   const directOf = (mode: string): DirectWalk | undefined => {
     const it = (data.direct ?? []).find((it: any) => (it.legs ?? []).length > 0 && it.legs.every((l: any) => l.mode === mode))
@@ -263,8 +273,9 @@ export async function planJourneys(origin: LatLon & { name?: string }, dest: Pla
     return { durationMin: Math.max(1, Math.round(it.duration / 60)), meters: Math.round(it.legs.reduce((m: number, l: any) => m + (l.distance ?? 0), 0)) }
   }
   const walk = directOf('WALK')
+  const regular = await parse(data, origin, dest)
   return {
-    journeys: await parse(data, origin, dest),
+    journeys: mergeJourneys(regular, worthBiking(await bikeFirst, regular)),
     // delší limit kvůli autu nesmí nabízet delší pěší cesty než dřív
     walk: walk && walk.durationMin * 60 <= walkTime ? walk : undefined,
     car: extended ? directOf('CAR') : undefined,
@@ -273,6 +284,53 @@ export async function planJourneys(origin: LatLon & { name?: string }, dest: Pla
     query,
   }
 }
+
+/** nejdelší jízda na kole k zastávce, kterou necháme Transitous zvažovat (s) */
+const MAX_BIKE_PRE_S = 1200
+/** rezerva mezi vrácením kola a odjezdem spoje */
+const BIKE_SLACK_MS = 60000
+
+/**
+ * Spojení, kde první úsek jedeš sdíleným kolem (Transitous `preTransitModes=BIKE`). Každé se ověří
+ * proti živým datům: kolo na stojanu u startu a volné místo na stojanu u nástupní zastávky.
+ * Čas úseku se přepočítá na skutečné stojany (pěšky na stojan, kolo, pěšky na nástupiště, půjčení).
+ */
+async function bikeFirstJourneys(origin: LatLon & { name?: string }, dest: Place, kmh: number, maxPre: number, settings: Settings): Promise<Journey[]> {
+  if (!(await bikesNear(origin))) return []
+  const query = new URLSearchParams({
+    ...baseParams(`${origin.lat},${origin.lon}`, dest, kmh, maxPre),
+    preTransitModes: 'BIKE',
+    maxPreTransitTime: String(MAX_BIKE_PRE_S),
+    searchWindow: '2700',
+    numItineraries: '5',
+    maxItineraries: '8',
+  }).toString()
+  const walkKmh = Math.min(kmh, 6.5)
+  const rider = { category: settings.category, coupons: settings.coupons }
+  const out: Journey[] = []
+  for (const j of await parse(await fetchPlan(query), origin, dest)) {
+    const first = j.legs[0]
+    const ride = transitLegs(j)[0]
+    if (first?.kind !== 'walk' || !ride || j.legs[1] !== ride) continue
+    const bike = await bikeToStop(origin, first.to, walkKmh, rider)
+    if (!bike) continue
+    const start = ride.from.time - BIKE_SLACK_MS - bike.totalMin * 60000
+    if (start < Date.now() - 30000) continue // na tenhle spoj už kolem nestihneš
+    const leg: WalkLeg = { ...first, durationMin: bike.totalMin, meters: bike.from.walkM + bike.rideM + bike.to.walkM, bike }
+    const legs = [leg, ...j.legs.slice(1)]
+    const bj: Journey = { ...j, legs, start, durationMin: Math.round((j.end - start) / 60000) }
+    bj.id = journeyKey(bj)
+    out.push(bj)
+  }
+  return out
+}
+
+/**
+ * Spojení s kolem nech jen tam, kde se vyplatí: žádné běžné spojení nedorazí stejně brzy
+ * nebo dřív a zároveň nevyráží stejně pozdě nebo později.
+ */
+const worthBiking = (bike: Journey[], regular: Journey[]) =>
+  bike.filter((b) => !regular.some((r) => r.end <= b.end && r.start >= b.start))
 
 /** Načte dřívější (`prev`) nebo pozdější (`next`) spojení ke stejnému dotazu. */
 export async function morePage(page: JourneyPage, dir: 'prev' | 'next', origin: LatLon & { name?: string }, dest: Place): Promise<JourneyPage> {

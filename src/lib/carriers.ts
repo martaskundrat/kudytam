@@ -34,7 +34,7 @@ const KNOWN: { id: CarrierId; name: string; re: RegExp; web: string }[] = [
 const validWeb = (u?: string) => (u && /^https?:\/\//.test(u) && !/cisjr\.cz|invalid/.test(u) ? u : undefined)
 
 /** „IDS JMK (Data from: KORDIS JMK, DPMB)“ → „IDS JMK“ */
-const cleanName = (n: string) => n.replace(/s*((data|daten)[^)]*)s*$/i, '').trim()
+const cleanName = (n: string) => n.replace(/\s*\((data|daten)\b[^)]*\)\s*$/i, '').trim()
 
 export function carrierOf(l: TransitLeg): Carrier {
   const text = `${l.agency} ${l.agencyId ?? ''} ${l.from.stopId ?? ''}`

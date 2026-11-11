@@ -127,6 +127,11 @@ Volba se pamatuje.
   Zbytek jízdy se platí podle ceníku poskytovatele.
   Tlačítko otevře aplikaci nextbike přímo na stanici (`rental_uris`), navigace na kole vede přes Mapy.com.
   Rekola a Bolt veřejný feed nemají.
+- **Sdílené kolo na začátek cesty** (např. z Říčan kolem na nádraží a dál vlakem): když je do 400 m stojan s kolem,
+  zeptá se aplikace Transitous i na spojení s kolem k zastávce (`preTransitModes=BIKE`). Každé se ověří proti živým datům
+  (kolo na stojanu u startu, volné místo na stojanu do 350 m od nástupní zastávky) a čas úseku se přepočítá na skutečné stojany
+  (pěšky na stojan, kolo, pěšky na nástupiště, minuta na půjčení a vrácení, minuta rezerva). Spojení s kolem zůstane jen tam,
+  kde žádné běžné spojení nevyráží stejně pozdě a nedorazí stejně brzy. Cena kola se přičte k jízdnému.
 - **Taxi – Uber, Bolt, Liftago**: čas a vzdálenost jízdy autem počítá Transitous (`directModes=WALK,CAR`,
   `fastestDirectFactor=100`, jinak by zahodil spojení MHD pomalejší než auto). Počítá se s ~6 min na přistavení vozu.
   Cena je **orientační rozpětí**, protože aplikace ceník nezveřejňují. Horní mez = maximální cena taxi v Praze

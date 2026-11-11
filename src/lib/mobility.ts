@@ -114,6 +114,7 @@ interface GbfsStation {
   uris?: { android?: string; ios?: string; web?: string }
   planId?: string
   regionId?: string
+  regionName?: string
 }
 
 interface PricingSegment {
@@ -156,6 +157,9 @@ async function loadSystem(sys: BikeSystem): Promise<SystemData> {
     get('system_pricing_plans').catch(() => null),
     get('free_bike_status').catch(() => null),
   ])
+  // názvy regionů (systém nextbike Praha pokrývá i Říčany)
+  const regions = await get('system_regions').catch(() => null)
+  const regionName = new Map<string, string>((regions?.data?.regions ?? []).map((r: any) => [r.region_id, r.name]))
   const st = new Map<string, any>((status.data?.stations ?? []).map((s: any) => [s.station_id, s]))
   // Kolo na stojanu musí potvrdit oba feedy: počet ve station_status i konkrétní kola ve free_bike_status
   // (bez rezervovaných a vyřazených). Zastaralá data nebo chybějící seznam kol = žádné kolo.
@@ -185,6 +189,7 @@ async function loadSystem(sys: BikeSystem): Promise<SystemData> {
       uris: s.rental_uris,
       planId: planAt.get(s.station_id),
       regionId: s.region_id ?? undefined,
+      regionName: regionName.get(s.region_id),
     }
   })
   return {
@@ -252,62 +257,101 @@ const nearest = (list: GbfsStation[], p: LatLon, radius: number) =>
     .sort((a, b) => a.d - b.d)
     .slice(0, CANDIDATES)
 
+/** Nejrychlejší dvojice stojanů: kolo na stojanu u `from`, volné místo na stojanu u `to`. */
+function bestPair(sys: BikeSystem, data: SystemData, from: LatLon, to: LatLon, walkKmh: number, startRadius: number, endRadius: number, rider: Rider): BikeOption | null {
+  const starts = nearest(data.stations.filter((s) => s.renting && s.bikes > 0), from, startRadius)
+  const ends = nearest(data.stations.filter((s) => s.returning && (s.docks > 0 || s.virtual)), to, endRadius)
+  let best: BikeOption | null = null
+  for (const a of starts) {
+    for (const b of ends) {
+      if (a.s.id === b.s.id) continue
+      const air = distanceM(a.s, b.s)
+      if (air < MIN_RIDE_M) continue
+      const wa = travelMinutes(a.d, walkKmh)
+      const wb = travelMinutes(b.d, walkKmh)
+      const ride = travelMinutes(air, BIKE_KMH)
+      const total = Math.ceil(wa + ride + wb + RENT_MIN)
+      if (best && total >= best.totalMin) continue
+      const plan = data.plans.get(a.s.planId ?? '') ?? [...data.plans.values()][0]
+      const rideMin = Math.max(1, Math.ceil(ride))
+      // minuty zdarma podle regionu stanice, kde si kolo půjčíš (v Praze musí jízda i skončit v Praze)
+      const free = sys.freeRides?.find(
+        (f) => f.regions.includes(a.s.regionId ?? '') && (!f.endInRegion || f.regions.includes(b.s.regionId ?? '')) && f.applies(rider),
+      )
+      const freeMin = free?.minutes ?? 0
+      best = {
+        systemId: sys.id,
+        brand: sys.brand,
+        area: a.s.regionName ?? sys.area,
+        from: { ...a.s, walkMin: Math.round(wa), walkM: Math.round(a.d * 1.3) },
+        to: { ...b.s, walkMin: Math.round(wb), walkM: Math.round(b.d * 1.3) },
+        rideMin,
+        rideM: Math.round(air * 1.3),
+        totalMin: total,
+        // zbytek jízdy nad minuty zdarma podle ceníku poskytovatele
+        price: rideMin <= freeMin ? 0 : plan ? rentalPrice(plan, rideMin - freeMin) : null,
+        freeMin,
+        freeNote: free?.note,
+        priceLabel: plan?.name,
+        open: appLink(sys.app.android, sys.app.ios, sys.app.web, a.s.uris),
+      }
+    }
+  }
+  return best
+}
+
+/** minuty na půjčení a vrácení kola */
+const RENT_MIN = 1
+/** jak daleko smí být stojan s kolem od startu, když kolem jen dojíždíš na zastávku */
+export const FEEDER_START_M = 400
+/** jak daleko smí být stojan s volným místem od nástupní zastávky */
+const FEEDER_END_M = 350
+
+const systemsAt = (p: LatLon, radius: number) => BIKE_SYSTEMS.filter((s) => inArea(s, p, radius))
+async function loaded(sys: BikeSystem): Promise<SystemData | null> {
+  try {
+    return await system(sys)
+  } catch {
+    return null // výpadek feedu nesmí shodit vyhledávání
+  }
+}
+
 /**
  * Nejrychlejší cesta sdíleným kolem: dojít na stanici s volným kolem (v „širším okolí“),
- * dojet na stanici s volným stojanem u cíle a dojít. Vrací null, když se kolo nevyplatí.
+ * dojet na stanici s volným stojanem u cíle a dojít. Nabídne se, jen když je rychlejší než chůze.
  */
 export async function bikeOptions(origin: LatLon, dest: LatLon, walkKmh: number, radius: number, rider: Rider): Promise<BikeOption[]> {
   const out: BikeOption[] = []
   const walkOnly = travelMinutes(distanceM(origin, dest), walkKmh)
-  for (const sys of BIKE_SYSTEMS.filter((s) => inArea(s, origin, radius) && inArea(s, dest, radius))) {
-    let data: SystemData
-    try {
-      data = await system(sys)
-    } catch {
-      continue // výpadek feedu nesmí shodit vyhledávání
-    }
-    const starts = nearest(data.stations.filter((s) => s.renting && s.bikes > 0), origin, radius)
-    const ends = nearest(data.stations.filter((s) => s.returning && (s.docks > 0 || s.virtual)), dest, radius)
-    let best: BikeOption | null = null
-    for (const a of starts) {
-      for (const b of ends) {
-        if (a.s.id === b.s.id) continue
-        const air = distanceM(a.s, b.s)
-        if (air < MIN_RIDE_M) continue
-        const wa = travelMinutes(a.d, walkKmh)
-        const wb = travelMinutes(b.d, walkKmh)
-        const ride = travelMinutes(air, BIKE_KMH)
-        const total = Math.ceil(wa + ride + wb + 1) // +1 min na půjčení a vrácení
-        if (best && total >= best.totalMin) continue
-        const plan = data.plans.get(a.s.planId ?? '') ?? [...data.plans.values()][0]
-        const rideMin = Math.max(1, Math.ceil(ride))
-        // minuty zdarma podle regionu stanice, kde si kolo půjčíš (v Praze musí jízda i skončit v Praze)
-        const free = sys.freeRides?.find(
-          (f) => f.regions.includes(a.s.regionId ?? '') && (!f.endInRegion || f.regions.includes(b.s.regionId ?? '')) && f.applies(rider),
-        )
-        const freeMin = free?.minutes ?? 0
-        best = {
-          systemId: sys.id,
-          brand: sys.brand,
-          area: sys.area,
-          from: { ...a.s, walkMin: Math.round(wa), walkM: Math.round(a.d * 1.3) },
-          to: { ...b.s, walkMin: Math.round(wb), walkM: Math.round(b.d * 1.3) },
-          rideMin,
-          rideM: Math.round(air * 1.3),
-          totalMin: total,
-          // zbytek jízdy nad minuty zdarma podle ceníku poskytovatele
-          price: rideMin <= freeMin ? 0 : plan ? rentalPrice(plan, rideMin - freeMin) : null,
-          freeMin,
-          freeNote: free?.note,
-          priceLabel: plan?.name,
-          open: appLink(sys.app.android, sys.app.ios, sys.app.web, a.s.uris),
-        }
-      }
-    }
-    // kolo nabídni, jen když je rychlejší než jít celou cestu pěšky
+  for (const sys of systemsAt(origin, radius).filter((s) => inArea(s, dest, radius))) {
+    const data = await loaded(sys)
+    const best = data && bestPair(sys, data, origin, dest, walkKmh, radius, radius, rider)
     if (best && best.totalMin < walkOnly) out.push(best)
   }
   return out
+}
+
+/** Je u startu stojan s kolem? (aby se zbytečně nevyhledávala spojení s kolem) */
+export async function bikesNear(origin: LatLon): Promise<boolean> {
+  for (const sys of systemsAt(origin, FEEDER_START_M)) {
+    const data = await loaded(sys)
+    if (data?.stations.some((s) => s.renting && s.bikes > 0 && distanceM(origin, s) <= FEEDER_START_M)) return true
+  }
+  return false
+}
+
+/**
+ * Sdílené kolo na začátek cesty: ze stojanu u startu na stojan u nástupní zastávky.
+ * Vrací null, když u startu není kolo nebo u zastávky volné místo.
+ */
+export async function bikeToStop(origin: LatLon, stop: LatLon, walkKmh: number, rider: Rider): Promise<BikeOption | null> {
+  let best: BikeOption | null = null
+  for (const sys of systemsAt(origin, FEEDER_START_M).filter((s) => inArea(s, stop, FEEDER_END_M))) {
+    const data = await loaded(sys)
+    const b = data && bestPair(sys, data, origin, stop, walkKmh, FEEDER_START_M, FEEDER_END_M, rider)
+    if (b && (!best || b.totalMin < best.totalMin)) best = b
+  }
+  return best
 }
 
 /* ---------- taxi ---------- */

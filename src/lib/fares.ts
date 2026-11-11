@@ -299,9 +299,27 @@ export function fareOptions(j: Journey, settings: Settings, quotes?: Quotes): Fa
     options.push(make('cd-mix', 'Vlak s jízdenkou ČD + MHD s PID', parts))
   }
 
+  // sdílené kolo na začátku cesty se platí zvlášť – přidej ho ke každé variantě
+  const bike = j.legs.find((l) => l.kind === 'walk' && l.bike)
+  const bikePart: FarePart | null =
+    bike?.kind === 'walk' && bike.bike
+      ? {
+          title: `Sdílené kolo ${bike.bike.brand} ${bike.bike.area}`,
+          covers: `${bike.bike.from.name} → ${bike.bike.to.name} · ~${bike.bike.rideMin} min`,
+          price: bike.bike.price,
+          note: bike.bike.freeNote,
+          buy: [{ label: `Půjčit v aplikaci ${bike.bike.brand}`, href: bike.bike.open.href, hint: bike.bike.open.hint, primary: true }],
+        }
+      : null
+  const withBike = (o: FareOption): FareOption =>
+    bikePart
+      ? { ...o, parts: [bikePart, ...o.parts], total: o.total + (bikePart.price ?? 0), incomplete: o.incomplete || bikePart.price === null }
+      : o
+
   // stejné varianty (např. SMS = aplikace) nezobrazuj dvakrát; nejlevnější první
   const seen = new Set<string>()
   return (options.filter(Boolean) as FareOption[])
+    .map(withBike)
     .filter((o) => {
       const k = o.parts.map((p) => `${p.title}:${p.price}`).join('|')
       return seen.has(k) ? false : (seen.add(k), true)
