@@ -73,6 +73,14 @@ u pěších úseků (na které nástupiště jdeš) a v zastávkách trasy spoje
 kde chybí, z označení nástupiště v data.pid.cz podle GTFS ID (`platformCodes` v `stations.ts`, např. metro „M2A“).
 Některá data nástupiště nemají (FlixBus, vlakové zastávky PID v datech PID) – pak se neukazuje.
 
+## Výstupy a vstupy metra
+
+U pěších úseků po jízdě metrem se ukazuje **výstup** (např. „výstup E2“), před jízdou metrem **vstup**, ♿ = bezbariérový.
+`src/lib/entrances.ts`: Transitous vede pěší trasu po OpenStreetMap včetně pater (`detailedTransfers=true`) – místo, kde trasa
+vyjde z podzemí, se spáruje s nejbližším vstupem metra (do 40 m); bez pater se vezme vstup, kolem kterého trasa vede.
+Seznam vstupů pražského metra (`railway=subway_entrance`, označení E1, E2…) je v `src/lib/metro-entrances.ts`
+(`npm run entrances`, Overpass API, © OpenStreetMap contributors). U přestupu metro → metro se výstup neukazuje.
+
 ## Spojení do cíle (s přestupy)
 
 `src/lib/journeys.ts` + `src/components/Journeys.tsx`

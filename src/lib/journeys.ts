@@ -8,6 +8,7 @@
 import type { LatLon, Place, Settings, VehicleType } from '../types'
 import { distanceM, inCzechia, travelMinutes } from './geo'
 import { bikeAreaAt, bikeFromStop, bikesNear, bikeToStop, type BikeOption } from './mobility'
+import { entranceOf, type Entrance } from './entrances'
 import { platformCodes, platformZones, zonesNear } from './stations'
 
 export interface LegStop {
@@ -36,6 +37,10 @@ export interface WalkLeg {
   bikeLater?: boolean
   /** Transitous tu počítal s kolem (jen při zpracování, před ověřením) */
   viaBike?: boolean
+  /** kterým výstupem z metra vyjít (úsek po jízdě metrem) */
+  exit?: Entrance
+  /** kterým vstupem do metra vejít (úsek před jízdou metrem) */
+  entrance?: Entrance
 }
 
 export interface TransitLeg {
@@ -181,13 +186,19 @@ async function parse(data: any, origin: LatLon & { name?: string }, dest: Place)
   const codeOf = await platformCodes().catch(() => () => undefined)
 
   const journeys: Journey[] = (data.itineraries ?? []).map((it: any, i: number): Journey => {
-    const legs: Leg[] = (it.legs ?? []).map((l: any): Leg => {
+    const raw: any[] = it.legs ?? []
+    const legs: Leg[] = raw.map((l: any, idx: number): Leg => {
       const from = stopOf(l.from, 'departure')
       const to = stopOf(l.to, 'arrival')
       for (const s of [from, to]) if (!s.track && s.gtfsId) s.track = codeOf(s.gtfsId)
       const durationMin = Math.round((l.duration ?? (to.time - from.time) / 1000) / 60)
       if (l.mode === 'WALK' || l.mode === 'BIKE' || l.mode === 'CAR') {
-        return { kind: 'walk', from, to, durationMin, meters: Math.round(l.distance ?? 0), viaBike: l.mode === 'BIKE' || undefined }
+        // výstup z metra / vstup do metra (E1, E2…) – ne u přestupu metro → metro (to se jde podzemím)
+        const afterMetro = raw[idx - 1]?.mode === 'SUBWAY'
+        const beforeMetro = raw[idx + 1]?.mode === 'SUBWAY'
+        const exit = afterMetro && !beforeMetro && l.mode === 'WALK' ? entranceOf(l, 'exit') : undefined
+        const entrance = beforeMetro && !afterMetro && l.mode === 'WALK' ? entranceOf(l, 'entry') : undefined
+        return { kind: 'walk', from, to, durationMin, meters: Math.round(l.distance ?? 0), viaBike: l.mode === 'BIKE' || undefined, exit, entrance }
       }
       const ids = [l.from?.stopId, ...(l.intermediateStops ?? []).map((s: any) => s.stopId), l.to?.stopId].map(gtfsOf)
       const zones = new Set<string>()
@@ -255,7 +266,8 @@ function baseParams(from: string, dest: Place, kmh: number, maxPre: number) {
     pedestrianSpeed: (kmh / 3.6).toFixed(2),
     maxPreTransitTime: String(Math.round(maxPre)),
     maxPostTransitTime: '900',
-    detailedTransfers: 'false',
+    // podrobné přestupy: pěší trasa s patry i u přestupů (kvůli výstupům z metra)
+    detailedTransfers: 'true',
     language: 'cs',
   }
 }

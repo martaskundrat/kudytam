@@ -270,6 +270,21 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
                   <span>
                     Pěšky {l.durationMin} min{l.meters > 0 && ` · ${formatDistance(l.meters)}`}
                     {i === shown.legs.length - 1 ? ' do cíle' : i === 0 && l.to.name ? ` na ${l.to.name}` : ' (přestup)'}
+                    {/* kterým výstupem z metra vyjít / vstupem vejít (E1, E2…) */}
+                    {l.exit && (
+                      <b className="text-white">
+                        {' '}
+                        · výstup {l.exit.code}
+                        {l.exit.wheelchair ? ' ♿' : ''}
+                      </b>
+                    )}
+                    {l.entrance && (
+                      <b className="text-white">
+                        {' '}
+                        · vstup {l.entrance.code}
+                        {l.entrance.wheelchair ? ' ♿' : ''}
+                      </b>
+                    )}
                     {/* na které nástupiště jdeš (podle následujícího spoje) */}
                     {(() => {
                       const next = shown.legs[i + 1]

@@ -7,7 +7,8 @@
     "preview": "vite preview",
     "stops": "node scripts/build-stops.mjs",
     "bikes": "node scripts/build-bike-systems.mjs",
-    "deploy": "npm run build && npx wrangler pages deploy dist --project-name kudytam --branch main"
+    "deploy": "npm run build && npx wrangler pages deploy dist --project-name kudytam --branch main",
+    "entrances": "node scripts/build-entrances.mjs"
   },
   "license": "MIT",
   "type": "module",
