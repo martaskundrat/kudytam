@@ -394,54 +394,67 @@ const SAME_TRIP_MS = 30000
 const sumWalkMs = (legs: Leg[]) => legs.reduce((t, l) => t + (l.kind === 'walk' ? l.durationMin * 60000 : 0), 0)
 
 /**
- * Jiný spoj na jednom úseku spojení (jako v IDOSu): `next` = pozdější odjezd z nástupní
- * zastávky úseku, `prev` = dřívější, který ale po předchozím úseku ještě stihneš.
- * Úseky před ním zůstanou, zbytek cesty do cíle se přepočítá.
- * Vrací null, pokud jiný spoj neexistuje.
+ * Jiný spoj na jednom úseku spojení (jako v IDOSu): `next` = pozdější odjezd, `prev` = dřívější,
+ * který ale po předchozím úseku ještě stihneš. Úseky MHD před ním zůstanou, zbytek cesty se přepočítá.
+ *
+ * Hledá se od místa, kde vystoupíš z předchozího spoje (u prvního úseku od výchozího místa), takže
+ * chůze na přestup se spočítá znovu a nahradí tu původní – nesčítá se (nový spoj může jet z jiného nástupiště).
+ * Přednost mají spoje ze stejné zastávky jako původní úsek. Vrací null, pokud jiný spoj neexistuje.
  */
 export async function shiftLeg(j: Journey, legIndex: number, dir: 'prev' | 'next', dest: Place, kmh: number): Promise<Journey | null> {
   const leg = j.legs[legIndex]
-  if (leg?.kind !== 'transit' || !leg.from.stopId) return null
+  if (leg?.kind !== 'transit') return null
   const prefix = j.legs.slice(0, legIndex)
   const lastIdx = prefix.map((l) => l.kind).lastIndexOf('transit')
+  const prev = lastIdx >= 0 ? (prefix[lastIdx] as TransitLeg) : null
+  // úseky, které zůstanou beze změny: jen do posledního spoje MHD (bez přestupní chůze za ním)
+  const keep = prev ? prefix.slice(0, lastIdx + 1) : []
+  const walkBefore = sumWalkMs(prefix.slice(lastIdx + 1))
   const dep = leg.from.time
+
+  // odkud hledat: zastávka výstupu z předchozího spoje, nebo výchozí místo
+  const origin = prev ? prev.to : (prefix[0]?.from ?? leg.from)
+  // od přesné polohy (ne od ID stanice) – Transitous jinak bere všechna nástupiště stanice jako jedno místo
+  // a chůzi na přestup vynechá
+  const fromPlace = `${origin.lat},${origin.lon}`
+  // nejdřív můžeš vyrazit: po příjezdu předchozím spojem, u prvního úseku teď
+  const earliest = prev ? prev.to.time : Date.now()
 
   let time: number
   let windowS: number
   if (dir === 'next') {
-    time = dep + SAME_TRIP_MS
+    time = Math.max(earliest, dep - walkBefore + SAME_TRIP_MS)
     windowS = 3600
   } else {
-    // nejdřívější okamžik, kdy můžeš na zastávce být: po příjezdu předchozím spojem a přestupu,
-    // u prvního úseku až po cestě pěšky z výchozího místa (vyrazit dřív než teď nejde)
-    const from =
-      lastIdx >= 0
-        ? (prefix[lastIdx] as TransitLeg).to.time + sumWalkMs(prefix.slice(lastIdx + 1))
-        : Date.now() + sumWalkMs(prefix)
-    if (from >= dep - SAME_TRIP_MS) return null
-    time = from
-    windowS = Math.max(60, Math.round((dep - from) / 1000))
+    // dřívější spoj nestihneš už ani s dosavadní chůzí
+    if (earliest + walkBefore >= dep - SAME_TRIP_MS) return null
+    time = earliest
+    windowS = Math.max(60, Math.round((dep - earliest) / 1000))
   }
+  // přestup: chůze na jiné nástupiště / blízkou zastávku; z výchozího místa jako původně
+  const maxPre = prev ? 600 : Math.max(600, Math.round((walkBefore / 1000) * 2))
   const query = new URLSearchParams({
-    ...baseParams(leg.from.stopId, dest, kmh, 300), // ze zastávky jen přechod na jiné nástupiště
+    ...baseParams(fromPlace, dest, kmh, maxPre),
     time: new Date(time).toISOString(),
     searchWindow: String(windowS),
-    numItineraries: '4',
-    maxItineraries: '8',
+    numItineraries: '5',
+    maxItineraries: '10',
   }).toString()
   const data = await fetchPlan(query)
-  const cands = await parse(data, { lat: leg.from.lat, lon: leg.from.lon, name: leg.from.name }, dest)
-  const firstDep = (c: Journey) => transitLegs(c)[0]?.from.time ?? c.start
-  const pick =
+  const cands = await parse(data, { lat: origin.lat, lon: origin.lon, name: origin.name || 'Výchozí místo' }, dest)
+  const firstRide = (c: Journey) => transitLegs(c)[0]
+  const firstDep = (c: Journey) => firstRide(c)?.from.time ?? c.start
+  const ok =
     dir === 'next'
-      ? cands.filter((c) => firstDep(c) > dep + SAME_TRIP_MS - 1000).sort((a, b) => firstDep(a) - firstDep(b) || a.end - b.end)[0]
-      : cands
-          .filter((c) => firstDep(c) < dep - SAME_TRIP_MS + 1000 && c.start >= time - 1000)
-          .sort((a, b) => firstDep(b) - firstDep(a) || a.end - b.end)[0]
+      ? cands.filter((c) => firstDep(c) > dep + SAME_TRIP_MS - 1000)
+      : cands.filter((c) => firstDep(c) < dep - SAME_TRIP_MS + 1000 && c.start >= time - 1000)
+  const sameStop = ok.filter((c) => firstRide(c)?.from.name === leg.from.name)
+  const pool = sameStop.length ? sameStop : ok
+  const pick = pool.sort((a, b) => (dir === 'next' ? firstDep(a) - firstDep(b) : firstDep(b) - firstDep(a)) || a.end - b.end)[0]
   if (!pick) return null
 
-  const legs = [...prefix, ...pick.legs]
-  const start = lastIdx >= 0 ? j.start : pick.start - sumWalkMs(prefix)
+  const legs = [...keep, ...pick.legs]
+  const start = prev ? j.start : pick.start
   const out: Journey = {
     id: '',
     start,
