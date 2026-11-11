@@ -78,6 +78,17 @@ Bez klíče aplikace běží na **demo datech** (smyšlené odjezdy).
 - Vlak ČD: tlačítko „Vyhledat v IDOS“ otevře IDOS s předvyplněnou trasou a časem (`f`, `t`, `date`, `time` v URL).
   E-shop ČD předvyplnění neumí (formulář jejich hlavní stránky odmítá data zvenčí), takže tlačítko „E-shop ČD“ zkopíruje stanice do schránky.
 
+## Cíl: stanice, adresa nebo GPS
+
+V kolonce **Kam** (a u domova) jde zadat stanici PID, adresu (Transitous /geocode nad OpenStreetMap) nebo GPS souřadnice:
+desetinné stupně (i s čárkou), stupně/minuty/vteřiny, světové strany (N/E i s. š./v. d.) a vložený odkaz z Google Map nebo Mapy.cz.
+K GPS bodu se dohledá nejbližší adresa (/reverse-geocode).
+
+## Cesta pěšky
+
+Když je cíl vzdušnou čarou do „širšího okolí“ (menu), nabídne se i cesta pěšky (Transitous `direct`, se zvolenou rychlostí)
+se srovnáním příjezdu s nejrychlejší MHD a tlačítkem pro navigaci v mapách.
+
 ## Domov
 
 V menu si nastavíš domov – konkrétní adresu (vyhledávání Transitous /geocode nad OpenStreetMap) nebo stanici. Tlačítko **Domů** pak vyhledá nejlepší spojení domů z aktuální polohy.

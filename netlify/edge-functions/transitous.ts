@@ -6,13 +6,14 @@
  *   GET /api/transitous/plan?... -> https://api.transitous.org/api/v1/plan?...   (vyhledání spojení)
  *   GET /api/transitous/trip?... -> https://api.transitous.org/api/v1/trip?...   (všechny zastávky spoje)
  *   GET /api/transitous/geocode?... -> https://api.transitous.org/api/v1/geocode?...   (adresy)
+ *   GET /api/transitous/reverse-geocode?... -> …/api/v1/reverse-geocode?...   (adresa k GPS bodu)
  */
 const USER_AGENT = 'Kudytam/1.0 (+https://kudytam-app.netlify.app; https://github.com/martaskundrat/kudytam)'
 
 export default async (req: Request) => {
   const url = new URL(req.url)
   const endpoint = url.pathname.replace(/^\/api\/transitous\//, '')
-  if (req.method !== 'GET' || !['plan', 'trip', 'geocode'].includes(endpoint)) return new Response('Not found', { status: 404 })
+  if (req.method !== 'GET' || !['plan', 'trip', 'geocode', 'reverse-geocode'].includes(endpoint)) return new Response('Not found', { status: 404 })
 
   const upstream = await fetch(`https://api.transitous.org/api/v1/${endpoint}${url.search}`, {
     headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },

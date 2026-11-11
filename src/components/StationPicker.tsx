@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { searchAddresses } from '../lib/geocode'
+import { formatCoords, parseCoordinates, reverseGeocode, searchAddresses } from '../lib/geocode'
 import { loadStations, searchStations } from '../lib/stations'
 import type { LatLon, Place } from '../types'
 import { IconClose, IconPin } from './ui'
@@ -82,11 +82,37 @@ function SearchOverlay({
   const [error, setError] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
   const [addr, setAddr] = useState<Place[]>([])
+  // zadané GPS souřadnice + nejbližší adresa k nim
+  const coords = addresses ? parseCoordinates(q) : null
+  const coordsKey = coords ? formatCoords(coords) : ''
+  const [gpsName, setGpsName] = useState<{ key: string; place: Place | null } | null>(null)
+
+  useEffect(() => {
+    if (!coords) return
+    const ctrl = new AbortController()
+    setGpsName(null)
+    reverseGeocode(coords, ctrl.signal)
+      .then((place) => setGpsName({ key: coordsKey, place }))
+      .catch(() => !ctrl.signal.aborted && setGpsName({ key: coordsKey, place: null }))
+    return () => ctrl.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coordsKey])
+
+  const gpsPlace = (): Place | null => {
+    if (!coords) return null
+    const near = gpsName?.key === coordsKey ? gpsName.place : null
+    return {
+      name: near ? near.name : `GPS ${coordsKey}`,
+      detail: near ? `GPS ${coordsKey}${near.detail ? ` · ${near.detail}` : ''}` : 'GPS bod',
+      lat: coords.lat,
+      lon: coords.lon,
+    }
+  }
   const [addrLoading, setAddrLoading] = useState(false)
 
   // adresy: s prodlevou, ať se neptáme při každém písmenu
   useEffect(() => {
-    if (!addresses || q.trim().length < 3) return setAddr([])
+    if (!addresses || q.trim().length < 3 || parseCoordinates(q)) return setAddr([])
     const ctrl = new AbortController()
     const t = setTimeout(() => {
       setAddrLoading(true)
@@ -130,7 +156,11 @@ function SearchOverlay({
           autoFocus
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && results[0] && onPick(results[0])}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter') return
+            const pick = gpsPlace() ?? results[0] ?? addr[0]
+            if (pick) onPick(pick)
+          }}
           placeholder={placeholder}
           enterKeyHint="search"
           className="min-w-0 flex-1 rounded-full bg-highlight px-5 py-3 text-lg outline-none ring-brand placeholder:text-subtle focus:ring-2"
@@ -140,6 +170,19 @@ function SearchOverlay({
         </button>
       </div>
       <ul className="mx-auto w-full max-w-lg flex-1 overflow-y-auto px-2 pb-8">
+        {coords && (
+          <li>
+            <button onClick={() => onPick(gpsPlace()!)} className="flex w-full items-center gap-3 rounded-xl bg-brand/10 px-3 py-3 text-left ring-1 ring-brand/40 hover:bg-brand/20">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand text-lg text-black">📍</span>
+              <span className="min-w-0">
+                <span className="block truncate font-semibold">GPS bod {coordsKey}</span>
+                <span className="block truncate text-xs text-subtle">
+                  {gpsName?.key !== coordsKey ? 'Hledám nejbližší adresu…' : gpsName.place ? `u adresy ${gpsName.place.name}${gpsName.place.detail ? `, ${gpsName.place.detail}` : ''}` : 'Bez adresy v okolí'}
+                </span>
+              </span>
+            </button>
+          </li>
+        )}
         {emptyLabel && (
           <li>
             <button onClick={() => onPick(null)} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-highlight">
@@ -152,11 +195,13 @@ function SearchOverlay({
         )}
         {error && <li className="px-4 py-3 text-sm text-red-400">{error}</li>}
         {!ready && !error && q.length >= 2 && <li className="px-4 py-3 text-sm text-subtle">Načítám stanice…</li>}
-        {ready && q.trim().length >= 2 && results.length === 0 && (!addresses || (!addrLoading && addr.length === 0)) && (
+        {ready && q.trim().length >= 2 && !coords && results.length === 0 && (!addresses || (!addrLoading && addr.length === 0)) && (
           <li className="px-4 py-3 text-sm text-subtle">{addresses ? 'Nic nenalezeno.' : 'Žádná stanice PID nenalezena.'}</li>
         )}
         {q.trim().length < 2 && (
-          <li className="px-4 py-3 text-sm text-subtle">{addresses ? 'Napiš adresu (ulice a číslo) nebo název stanice.' : 'Napiš aspoň 2 písmena názvu stanice.'}</li>
+          <li className="px-4 py-3 text-sm text-subtle">
+            {addresses ? 'Napiš adresu (ulice a číslo), název stanice nebo GPS souřadnice (např. 50.0786, 14.4345).' : 'Napiš aspoň 2 písmena názvu stanice.'}
+          </li>
         )}
         {addresses && results.length > 0 && <li className="px-4 pt-2 pb-1 text-[11px] font-bold tracking-wider text-subtle uppercase">Stanice</li>}
         {results.map((r) => (

@@ -479,3 +479,77 @@ function TripStops({ tripId, from, to }: { tripId: string; from: string; to: str
     </div>
   )
 }
+
+const MODE_LABEL: Record<string, string> = {
+  slow: 'Pěšky',
+  walk: 'Pěšky',
+  fast: 'Pěšky',
+  run: 'Během',
+  scooter: 'Na koloběžce',
+  bike: 'Na kole',
+  custom: 'Vlastním tempem',
+}
+
+/**
+ * Cesta celá pěšky – nabízí se, když je cíl do vzdálenosti „širšího okolí“.
+ * Porovná příjezd s nejlepším spojením MHD a otevře navigaci pro chodce.
+ */
+export function WalkCard({
+  walk,
+  from,
+  to,
+  now,
+  journeys,
+  mode = 'walk',
+}: {
+  walk: { durationMin: number; meters: number; estimated?: boolean }
+  /** id způsobu přesunu z menu (chůze, běh, koloběžka, kolo…) */
+  mode?: string
+  from: { lat: number; lon: number }
+  to: { lat: number; lon: number; name: string }
+  now: number
+  journeys: Journey[]
+}) {
+  const label = MODE_LABEL[mode] ?? 'Pěšky'
+  const arrival = now + walk.durationMin * 60000
+  const live = journeys.filter((j) => j.start >= now - 30000)
+  const bestTransit = live.reduce<Journey | null>((a, b) => (!a || b.end < a.end ? b : a), null)
+  const diff = bestTransit ? Math.round((bestTransit.end - arrival) / 60000) : null
+  const faster = diff === null || diff >= 0
+  // Google Maps „directions“ URL je veřejně zdokumentovaná a v telefonu otevře aplikaci Mapy
+  const nav = `https://www.google.com/maps/dir/?api=1&origin=${from.lat},${from.lon}&destination=${to.lat},${to.lon}&travelmode=${mode === 'bike' || mode === 'scooter' ? 'bicycling' : 'walking'}`
+  return (
+    <div className={`rounded-2xl p-4 ${faster ? 'bg-gradient-to-br from-brand/25 to-surface ring-1 ring-brand' : 'bg-surface'}`}>
+      {faster && (
+        <div className="mb-2 flex items-center gap-1 text-[11px] font-bold tracking-wider text-brand uppercase">
+          <IconSparkle className="size-3.5" /> {diff === null ? `${label} to zvládneš` : `${label} jsi tam nejdřív`}
+        </div>
+      )}
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="flex items-center gap-2 text-xl font-extrabold">
+          <IconWalk className="size-6" /> {label}
+        </div>
+        <div className="font-bold text-muted">
+          {walk.estimated ? '~' : ''}
+          {walk.durationMin} min · {formatDistance(walk.meters)}
+        </div>
+      </div>
+      <p className="mt-1 text-sm">
+        Vyraž hned a v cíli budeš v <b>{fmtTime(arrival)}</b>
+        {diff !== null && diff !== 0 && (
+          <span className="text-muted"> · {diff > 0 ? `o ${diff} min dřív` : `o ${-diff} min později`} než nejrychlejší MHD</span>
+        )}
+        {diff === 0 && <span className="text-muted"> · stejně jako MHD</span>}
+      </p>
+      <p className="mt-0.5 text-xs text-subtle">Bez jízdenky{walk.estimated ? ' · délka cesty odhadnutá' : ''}.</p>
+      <a
+        href={nav}
+        target="_blank"
+        rel="noreferrer"
+        className="mt-3 inline-block rounded-full bg-brand px-4 py-2 text-sm font-bold text-black transition hover:bg-brand-hover active:scale-95"
+      >
+        Navigovat ({label.toLowerCase()})
+      </a>
+    </div>
+  )
+}

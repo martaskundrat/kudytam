@@ -24,7 +24,7 @@ export default defineConfig(({ mode }) => {
   return {
     server: {
       proxy: {
-        '^/api/transitous/(plan|trip|geocode)': {
+        '^/api/transitous/(plan|trip|geocode|reverse-geocode)': {
           target: 'https://api.transitous.org',
           changeOrigin: true,
           rewrite: (p) => p.replace(/^\/api\/transitous/, '/api/v1'),

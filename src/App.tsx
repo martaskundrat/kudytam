@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { RecommendationCard, StopCard } from './components/Departures'
-import { JourneyCard, JourneySheet, recommend } from './components/Journeys'
+import { JourneyCard, JourneySheet, recommend, WalkCard } from './components/Journeys'
 import { Menu } from './components/Menu'
 import { RideSheet } from './components/RideSheet'
 import { StationPicker } from './components/StationPicker'
 import { Button, IconBus, IconFlag, IconHome, IconMenu, IconPin, IconRefresh, IconSwap, useNow } from './components/ui'
-import { getPosition } from './lib/geo'
+import { distanceM, getPosition, travelMinutes } from './lib/geo'
 import { mergeJourneys, morePage, planJourneys, type Journey, type JourneyPage } from './lib/journeys'
 import { plan, type PlanResult } from './lib/planner'
 import { settingsStore, speedKmh, useStore } from './lib/store'
@@ -17,7 +17,9 @@ const REFRESH_DEPARTURES_MS = 30000
 const REFRESH_JOURNEYS_MS = 90000
 const PRAGUE_CENTER: Place = { lat: 50.0815, lon: 14.428, name: 'Václavské náměstí', stopName: 'Václavské náměstí', zones: ['P'] }
 
-const samePlace = (a: Place | null, b: Place | null) => (a?.name ?? null) === (b?.name ?? null)
+/** stejné místo = stejný název i poloha (GPS body můžou sdílet název nejbližší adresy) */
+const samePlace = (a: Place | null, b: Place | null) =>
+  a === b || (!!a && !!b && a.name === b.name && Math.abs(a.lat - b.lat) < 1e-5 && Math.abs(a.lon - b.lon) < 1e-5)
 
 export default function App() {
   const settings = useStore(settingsStore)
@@ -36,6 +38,7 @@ export default function App() {
   const lastSelected = useRef<Journey | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
   const originRef = useRef<(LatLon & { name?: string }) | null>(null)
+  const [routeOrigin, setRouteOrigin] = useState<LatLon | null>(null)
   const [updatedAt, setUpdatedAt] = useState<number | null>(null)
   const reqId = useRef(0)
 
@@ -65,6 +68,7 @@ export default function App() {
       }
       if (dest) {
         originRef.current = origin
+        setRouteOrigin(origin)
         const fresh = await planJourneys(origin, dest, settings, kmh)
         if (id === reqId.current) setPage((old) => refreshPage(old, fresh))
       } else {
@@ -144,6 +148,13 @@ export default function App() {
     if (target) setSelectedId(target.id)
   }
 
+  // cíl v dosahu „širšího okolí“ -> nabídni i cestu pěšky
+  const airToDest = dest && routeOrigin ? distanceM(routeOrigin, dest) : null
+  const walkOption =
+    dest && routeOrigin && airToDest !== null && airToDest <= settings.wideRadius
+      ? (page?.walk ?? { durationMin: Math.max(1, Math.round(travelMinutes(airToDest, kmh))), meters: Math.round(airToDest * 1.3), estimated: true })
+      : null
+
   const pick = journeys ? recommend(journeys, settings.nearRadius, now) : null
   const showDepartures = !dest && result
   const showJourneys = dest && journeys
@@ -187,8 +198,9 @@ export default function App() {
             label="Kam"
             icon={<IconFlag />}
             value={draftDest}
-            emptyLabel="Cílová stanice (nepovinné)"
-            placeholder="Kam – název stanice"
+            emptyLabel="Cíl – stanice, adresa nebo GPS (nepovinné)"
+            placeholder="Kam – stanice, adresa, GPS"
+            addresses
             near={draftOrigin ?? position}
             onChange={setDraftDest}
           />
@@ -261,10 +273,14 @@ export default function App() {
               </button>
             </div>
 
-            {journeys.length === 0 && (
+            {journeys.length === 0 && !walkOption && (
               <p className="rounded-xl bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
                 V příští hodině jsme nenašli žádné spojení. Zkus zvětšit „Širší okolí“ v menu nebo jiný čas.
               </p>
+            )}
+
+            {walkOption && routeOrigin && (
+              <WalkCard walk={walkOption} from={routeOrigin} to={dest} now={now} journeys={journeys} mode={settings.travelModeId} />
             )}
 
             {journeys
@@ -383,6 +399,7 @@ function refreshPage(old: JourneyPage | null, fresh: JourneyPage): JourneyPage {
   const after = old.journeys.filter((j) => j.start > last)
   return {
     query: fresh.query,
+    walk: fresh.walk,
     journeys: mergeJourneys(before, after, fresh.journeys),
     prev: before.length ? old.prev : fresh.prev,
     next: after.length ? old.next : fresh.next,
