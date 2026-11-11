@@ -10,32 +10,9 @@ import { FareComparison } from './FareComparison'
 import type { BikeOption } from '../lib/mobility'
 import { fmtWhen } from '../lib/time'
 import { NavButtons } from './NavButtons'
+import { recommend, type JourneyPick } from '../lib/recommend'
+export { recommend, type JourneyPick }
 import { fmtKc, fmtTime, IconBike, IconSparkle, IconWalk, LineBadge, Sheet, useNow, VEHICLE_LABEL } from './ui'
-
-export interface JourneyPick {
-  journey: Journey
-  /** o kolik min dřív dorazíš než nejlepším spojem z nejbližších zastávek */
-  savedMin: number | null
-  farStop: boolean
-}
-
-/**
- * Doporučení: nejdřívější příjezd. Pokud vede přes vzdálenější zastávku,
- * spočítáme, kolik ušetří oproti nejlepšímu spoji z nejbližšího okolí.
- */
-export function recommend(journeys: Journey[], nearRadius: number, now: number): JourneyPick | null {
-  const live = journeys.filter((j) => j.start >= now - 30000 && !transitLegs(j).some((l) => l.cancelled))
-  if (!live.length) return null
-  const best = live.reduce((a, b) => (b.end < a.end || (b.end === a.end && b.transfers < a.transfers) ? b : a))
-  // u sdíleného kola se počítá jen chůze ke stojanu
-  const isNear = (j: Journey) => {
-    const w = firstWalk(j)
-    return (w?.bike ? w.bike.from.walkM : (w?.meters ?? 0)) <= nearRadius * 1.3
-  }
-  const bestNear = live.filter(isNear).reduce<Journey | null>((a, b) => (!a || b.end < a.end ? b : a), null)
-  const farStop = !isNear(best)
-  return { journey: best, farStop, savedMin: farStop && bestNear ? Math.round((bestNear.end - best.end) / 60000) : null }
-}
 
 /**
  * Živé ceny dopravců (FlixBus, RegioJet) pro úseky spojení. Dotazy se sdílejí v cache
@@ -116,7 +93,7 @@ export function JourneyCard({ j, now, pick, onSelect }: { j: Journey; now: numbe
       {recommended && (
         <div className="mb-2 flex items-center gap-1 text-[11px] font-bold tracking-wider text-brand uppercase">
           <IconSparkle className="size-3.5" />
-          {pick.farStop ? 'Nejrychlejší – přes vzdálenější zastávku' : 'Nejrychlejší'}
+          {pick.latest ? 'Nejpozdější odjezd, se kterým to stihneš' : pick.farStop ? 'Nejrychlejší – přes vzdálenější zastávku' : 'Nejrychlejší'}
         </div>
       )}
       <div className="flex items-baseline justify-between gap-2">

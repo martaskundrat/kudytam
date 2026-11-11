@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { RecommendationCard, StopCard } from './components/Departures'
 import { JourneyCard, JourneySheet, recommend, WalkCard } from './components/Journeys'
 import { Menu } from './components/Menu'
@@ -177,7 +177,20 @@ export default function App() {
     now + walkCandidate.durationMin * 60000 <= fastestTransitEnd + WALK_SLACK_MIN * 60000
   const walkOption = dest && routeOrigin && walkCandidate && ((airToDest ?? Infinity) <= settings.wideRadius || walkCompetitive) ? walkCandidate : null
 
-  const pick = journeys ? recommend(journeys, settings.nearRadius, now) : null
+  const pick = journeys ? recommend(journeys, settings.nearRadius, now, !!when?.arriveBy) : null
+
+  /** Dřívější / pozdější spojení v seznamu (další stránka výsledků Transitous). */
+  const loadMore = async (dir: 'prev' | 'next') => {
+    if (!page || !dest || !originRef.current || loadingMore) return
+    setLoadingMore(true)
+    try {
+      setPage(await morePage(page, dir, originRef.current, dest))
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setLoadingMore(false)
+    }
+  }
   const extended = settings.extendedSearch !== false
   const showDepartures = !dest && result
   const showJourneys = dest && journeys
@@ -329,12 +342,37 @@ export default function App() {
               <WalkCard walk={walkOption} from={routeOrigin} to={dest} now={now} journeys={journeys} mode={settings.travelModeId} when={when} />
             )}
 
-            {journeys
-              .filter((j) => j.start >= now - 30000)
-              .slice(0, 8)
-              .map((j) => (
-                <JourneyCard key={j.id} j={j} now={now} pick={pick} onSelect={(j) => setSelectedId(j.id)} />
-              ))}
+            {/* při hledání podle příjezdu nahoře nejpozdější odjezd (s ním to ještě stihneš), jinak podle odjezdu */}
+            {(when?.arriveBy ? (['next', 'prev'] as const) : (['prev', 'next'] as const)).map((dir, i) => {
+              const button = page?.[dir] && journeys.length > 0 && (
+                <button
+                  key={dir}
+                  onClick={() => loadMore(dir)}
+                  disabled={loadingMore}
+                  className="w-full rounded-xl bg-highlight py-2.5 text-sm font-semibold text-muted hover:text-white disabled:opacity-50"
+                >
+                  {loadingMore ? 'Načítám…' : dir === 'prev' ? 'Dřívější spojení' : 'Pozdější spojení'}
+                </button>
+              )
+              const list = journeys.filter((j) => j.start >= now - 30000)
+              if (when?.arriveBy) list.reverse()
+              return i === 0 ? (
+                <Fragment key="list">
+                  {button}
+                  {list.map((j) => (
+                    <JourneyCard key={j.id} j={j} now={now} pick={pick} onSelect={(j) => setSelectedId(j.id)} />
+                  ))}
+                </Fragment>
+              ) : (
+                button
+              )
+            })}
+
+            {when && !when.arriveBy && (
+              <p className="text-center text-xs text-subtle">
+                Potřebuješ být v cíli do určitého času (třeba na letišti)? Přepni nahoře na <b>Příjezd</b> – najdou se i noční spoje den předem.
+              </p>
+            )}
 
             {extended && routeOrigin && (
               <>
