@@ -12,6 +12,8 @@ export interface Place extends LatLon {
   types?: string[]
   /** časové pásmo místa (IANA, např. „Asia/Tokyo“) – u míst z vyhledávání Transitous */
   tz?: string
+  /** letiště z OpenStreetMap (bod uprostřed letištní plochy) – před hledáním se přesune na zastávku u terminálu */
+  airport?: { country?: string }
 }
 
 export interface Stop extends LatLon {

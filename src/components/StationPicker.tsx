@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { formatCoords, parseCoordinates, reverseGeocode, searchAddresses } from '../lib/geocode'
+import { formatCoords, parseCoordinates, reverseGeocode, searchAddresses, snapAirport } from '../lib/geocode'
 import { loadStations, searchStations } from '../lib/stations'
 import { settingsStore, useStore } from '../lib/store'
 import type { LatLon, Place, SearchScope } from '../types'
@@ -60,9 +60,10 @@ export function StationPicker({ label, icon, value, placeholder, emptyLabel, all
           addresses={!!addresses}
           near={near}
           onClose={() => setOpen(false)}
-          onPick={(p) => {
-            onChange(p)
+          onPick={async (p) => {
             setOpen(false)
+            // letiště: z prostředka letištní plochy na zastávku u terminálu
+            onChange(p?.airport ? await snapAirport(p) : p)
           }}
         />
       )}

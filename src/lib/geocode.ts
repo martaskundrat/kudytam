@@ -22,7 +22,14 @@ function toPlace(r: any): Place {
   const name = r.type === 'ADDRESS' && r.street ? `${r.street} ${r.houseNumber ?? ''}`.trim() : r.name
   // v zahraničí i stát (Paříž, FR)
   const detail = [...local.slice(0, 2), ...(r.country && r.country !== 'CZ' ? [r.country] : [])].join(', ')
-  return { name, detail: r.type === 'STOP' ? `Zastávka${detail ? ` · ${detail}` : ''}` : detail, lat: r.lat, lon: r.lon, tz: r.tz ?? undefined }
+  return {
+    name,
+    detail: r.type === 'STOP' ? `Zastávka${detail ? ` · ${detail}` : ''}` : r.category === 'aerodrome' ? `Letiště${detail ? ` · ${detail}` : ''}` : detail,
+    lat: r.lat,
+    lon: r.lon,
+    tz: r.tz ?? undefined,
+    ...(r.category === 'aerodrome' ? { airport: { country: r.country ?? undefined } } : {}),
+  }
 }
 
 /** evropské státy (ISO 3166-1 alpha-2) pro rozsah „Evropa“ */
@@ -82,6 +89,44 @@ export async function reverseGeocode(p: LatLon, signal?: AbortSignal): Promise<P
   const data: any[] = await res.json()
   const hit = data.find((r) => distanceM(p, r) < 150)
   return hit ? toPlace(hit) : null
+}
+
+/* ---------- letiště: z prostředka letištní plochy na zastávku u terminálu ---------- */
+
+/** „letiště“ v jazyce státu – tak se jmenují zastávky u terminálů (Flughafen München, Letiště, Aéroport CDG…) */
+const AIRPORT_WORD: Record<string, string> = {
+  CZ: 'Letiště', SK: 'Letisko', DE: 'Flughafen', AT: 'Flughafen', CH: 'Flughafen', FR: 'Aéroport', BE: 'Aéroport', LU: 'Aéroport',
+  IT: 'Aeroporto', ES: 'Aeropuerto', PT: 'Aeroporto', BR: 'Aeroporto', PL: 'Lotnisko', HU: 'Repülőtér', NL: 'Luchthaven', DK: 'Lufthavn',
+  NO: 'Lufthavn', SE: 'Flygplats', FI: 'Lentoasema', HR: 'Zračna luka', SI: 'Letališče', RO: 'Aeroport', TR: 'Havalimanı', GR: 'Αεροδρόμιο',
+}
+/** jak daleko od středu letištní plochy může být zastávka u terminálu */
+const AIRPORT_RADIUS_M = 6000
+
+/**
+ * OpenStreetMap dává letiště jako bod uprostřed letištní plochy – u velkých letišť i kilometry od terminálů
+ * (Mnichov: 4 km, nejbližší zastávka je za plotem v Hallbergmoosu). Vyhledávač pak z konečné autobusu
+ * „dováží“ k tomu bodu dalšími spoji. Proto letiště přesuneme na hlavní zastávku u terminálu:
+ * hledají se zastávky s „letiště“ v jazyce státu (+ Airport, Terminal) do 6 km. Přednost má hlavní zastávka:
+ * název bez čárky a z nich nejkratší („Flughafen München“, ne „Flughafen, Briefzentrum“;
+ * „Flughafen Wien“, ne „Flughafen Wien Mazur Parkplatz“), jinak první nalezená.
+ */
+export async function snapAirport(p: Place): Promise<Place> {
+  if (!p.airport) return p
+  const words = [...new Set([AIRPORT_WORD[p.airport.country ?? ''], 'Airport', 'Terminal'].filter(Boolean))]
+  const found = await Promise.all(
+    words.map((text) =>
+      fetch(`/api/transitous/geocode?${new URLSearchParams({ text, type: 'STOP', numResults: '15', place: `${p.lat},${p.lon}`, placeBias: '10' })}`)
+        .then((r) => (r.ok ? r.json() : []))
+        .catch(() => []),
+    ),
+  )
+  const cands = found
+    .flat()
+    .filter((r: any) => distanceM(p, r) <= AIRPORT_RADIUS_M && words.some((w) => String(r.name).toLowerCase().includes(w.toLowerCase())))
+  const main = cands.filter((r: any) => !String(r.name).includes(','))
+  const best = main.sort((a: any, b: any) => a.name.length - b.name.length || distanceM(p, a) - distanceM(p, b))[0] ?? cands[0]
+  if (!best) return p
+  return { ...p, lat: best.lat, lon: best.lon, detail: `Letiště · zastávka ${best.name}`, airport: undefined }
 }
 
 /* ---------- okres (pro odkazy do IDOS) ---------- */

@@ -149,6 +149,11 @@ V zahraničí (podle zjednodušeného obrysu hranic ČR, `inCzechia` v `geo.ts`)
 - **taxi** bez odhadu ceny a bez Liftaga (jezdí jen v ČR),
 - **navigace**: vždy Mapy.com, v zahraničí navíc **Google Maps** (`NavButtons`, Google Maps URLs `/maps/dir/?api=1`).
 
+**Letiště:** OpenStreetMap dává letiště jako bod uprostřed letištní plochy (v Mnichově 4 km od terminálů), takže
+vyhledávač z konečné autobusu „dovážel“ k tomu bodu dalšími spoji. Po výběru letiště ve vyhledávání se proto cíl přesune
+na hlavní zastávku u terminálu (`snapAirport` v `geocode.ts`: zastávky s „letiště“ v jazyce státu, Airport nebo Terminal
+do 6 km, přednost má nejkratší název bez čárky – „Flughafen München“, „Flughafen Wien“, „Letiště“ v Praze).
+
 **Časy v místním pásmu** (`src/lib/time.ts`): Transitous posílá u zastávek i míst pásmo (IANA, např. `Asia/Tokyo`).
 Odjezd se ukazuje v pásmu místa odjezdu, příjezd v pásmu cíle; když se liší od pásma telefonu, v závorce je i čas
 podle telefonu – „23:38 (15:38)“. Zvolený odjezd / příjezd se zadává v místním čase místa odjezdu / cíle.
