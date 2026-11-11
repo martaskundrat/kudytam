@@ -8,9 +8,9 @@
  *   GET /api/transitous/geocode?... -> https://api.transitous.org/api/v1/geocode?...   (adresy)
  *   GET /api/transitous/reverse-geocode?... -> …/api/v1/reverse-geocode?...   (adresa k GPS bodu)
  */
-const USER_AGENT = 'Kudytam/1.0 (+https://kudytam-app.netlify.app; https://github.com/martaskundrat/kudytam)'
+import { USER_AGENT } from './ua'
 
-export default async (req: Request) => {
+export async function transitous(req: Request): Promise<Response> {
   const url = new URL(req.url)
   const endpoint = url.pathname.replace(/^\/api\/transitous\//, '')
   if (req.method !== 'GET' || !['plan', 'trip', 'geocode', 'reverse-geocode'].includes(endpoint)) return new Response('Not found', { status: 404 })
@@ -26,5 +26,3 @@ export default async (req: Request) => {
     },
   })
 }
-
-export const config = { path: '/api/transitous/*' }

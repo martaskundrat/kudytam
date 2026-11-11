@@ -6,7 +6,7 @@
  *   GET /api/fares/regiojet/routes?...       -> https://brn-ybus-pubapi.sa.cz/restapi/routes/search/simple?...
  *   GET /api/fares/flixbus/search?...        -> https://global.api.flixbus.com/search/service/v4/search?...
  */
-const USER_AGENT = 'Kudytam/1.0 (+https://kudytam-app.netlify.app; https://github.com/martaskundrat/kudytam)'
+import { USER_AGENT } from './ua'
 
 const ROUTES: Record<string, { url: string; headers?: Record<string, string>; maxAge: number }> = {
   'regiojet/locations': { url: 'https://brn-ybus-pubapi.sa.cz/restapi/consts/locations', headers: { 'X-Lang': 'cs' }, maxAge: 86400 },
@@ -18,7 +18,7 @@ const ROUTES: Record<string, { url: string; headers?: Record<string, string>; ma
   'flixbus/search': { url: 'https://global.api.flixbus.com/search/service/v4/search', maxAge: 300 },
 }
 
-export default async (req: Request) => {
+export async function fares(req: Request): Promise<Response> {
   const url = new URL(req.url)
   const route = ROUTES[url.pathname.replace(/^\/api\/fares\//, '')]
   if (req.method !== 'GET' || !route) return new Response('Not found', { status: 404 })
@@ -33,5 +33,3 @@ export default async (req: Request) => {
     },
   })
 }
-
-export const config = { path: '/api/fares/*' }

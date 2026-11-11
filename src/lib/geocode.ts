@@ -1,6 +1,6 @@
 /**
- * Vyhledávání adres a míst přes Transitous /geocode a /reverse-geocode (data OpenStreetMap)
- * a rozpoznání zadaných GPS souřadnic.
+ * Vyhledávání adres, míst a zastávek v celé ČR přes Transitous /geocode a /reverse-geocode
+ * (data OpenStreetMap a jízdní řády) a rozpoznání zadaných GPS souřadnic.
  * Volá se přes proxy /api/transitous/* (povinný User-Agent s kontaktem).
  */
 import type { LatLon, Place } from '../types'
@@ -20,13 +20,18 @@ function toPlace(r: any): Place {
   // „Praha 2, obvod Praha 2“ -> „Praha 2“
   const local = sorted.filter((n) => !(n.startsWith('obvod ') && sorted.includes(n.slice('obvod '.length))))
   const name = r.type === 'ADDRESS' && r.street ? `${r.street} ${r.houseNumber ?? ''}`.trim() : r.name
-  return { name, detail: local.slice(0, 2).join(', '), lat: r.lat, lon: r.lon }
+  const detail = local.slice(0, 2).join(', ')
+  return { name, detail: r.type === 'STOP' ? `Zastávka${detail ? ` · ${detail}` : ''}` : detail, lat: r.lat, lon: r.lon }
 }
+
+/** zhruba území ČR (zastávky z Transitous nemají vždy uvedený stát) */
+const inCzechia = (p: LatLon) => p.lat >= 48.5 && p.lat <= 51.1 && p.lon >= 12.0 && p.lon <= 18.9
 
 export async function searchAddresses(query: string, near?: LatLon | null, signal?: AbortSignal): Promise<Place[]> {
   const q = query.trim()
   if (q.length < 3) return []
-  const params = new URLSearchParams({ text: q, type: 'ADDRESS,PLACE', numResults: '10', language: 'cs' })
+  // i zastávky a nádraží v celé ČR (zastávky PID hledá aplikace sama ve vlastním seznamu)
+  const params = new URLSearchParams({ text: q, type: 'ADDRESS,PLACE,STOP', numResults: '15', language: 'cs' })
   if (near) {
     params.set('place', `${near.lat},${near.lon}`)
     params.set('placeBias', '3') // upřednostni okolí, ale nevylučuj zbytek ČR
@@ -39,14 +44,21 @@ export async function searchAddresses(query: string, near?: LatLon | null, signa
   const out: Place[] = []
   for (const r of data) {
     if (r.country && r.country !== 'CZ') continue
+    if (!inCzechia(r)) continue
+    // zastávky jen z českých jízdních řádů (zahraniční sady mají české zastávky pod cizími názvy);
+    // zastávky PID hledá aplikace sama ve vlastním seznamu
+    const id = String(r.id ?? '')
+    if (r.type === 'STOP' && (!id.startsWith('cz-') || id.startsWith('cz-PID_'))) continue
     const p = toPlace(r)
+    // tatáž zastávka bývá ve více datových sadách (ČR, Slovensko, Maďarsko) – stejné jméno do 300 m je duplicita
+    if (r.type === 'STOP' && out.some((o) => o.name === p.name && distanceM(o, p) < 300)) continue
     // stejná adresa se v OSM často opakuje (vchody, budova, provozovna) i pod různými
     // tvary čísla (1409/12 vs. 12) – stejné místo do 40 m bereme jako duplicitu
     const key = `${p.name}|${p.detail}`
     if (seen.has(key) || out.some((o) => distanceM(o, p) < 40)) continue
     seen.add(key)
     out.push(p)
-    if (out.length >= 6) break
+    if (out.length >= 8) break
   }
   return out
 }
@@ -59,6 +71,68 @@ export async function reverseGeocode(p: LatLon, signal?: AbortSignal): Promise<P
   const data: any[] = await res.json()
   const hit = data.find((r) => distanceM(p, r) < 150)
   return hit ? toPlace(hit) : null
+}
+
+/* ---------- okres (pro odkazy do IDOS) ---------- */
+
+const okresCache = new Map<string, Promise<string | null>>()
+const okresKey = (p: LatLon) => `${p.lat.toFixed(3)},${p.lon.toFixed(3)}`
+
+/**
+ * Okres místa (`okres Praha-východ` → `Praha-východ`, Praha → `Praha`). IDOS podle něj rozliší
+ * stejně pojmenovaná místa („Říčany; Praha-východ“). Výsledky se pamatují.
+ */
+export function okresAt(p: LatLon): Promise<string | null> {
+  const key = okresKey(p)
+  let hit = okresCache.get(key)
+  if (!hit) {
+    hit = fetch(`/api/transitous/reverse-geocode?${new URLSearchParams({ place: `${p.lat},${p.lon}`, type: 'ADDRESS,PLACE', language: 'cs' })}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: any[]) => {
+        const areas: GeoArea[] = data[0]?.areas ?? []
+        if (areas.some((a) => a.adminLevel === 4 && a.name === 'Praha')) return 'Praha'
+        const okres = areas.find((a) => a.adminLevel === 5 && a.name.startsWith('okres '))
+        return okres ? okres.name.slice('okres '.length) : null
+      })
+      .catch(() => null)
+    okresCache.set(key, hit)
+  }
+  return hit
+}
+
+/**
+ * Český název zastávky z celostátních jízdních řádů (JDF autobusy, CZPTT vlaky) poblíž bodu.
+ * Mezinárodní dopravci (FlixBus) mají v datech anglické názvy („Prague (Main Railway Station)“),
+ * které IDOS nezná.
+ */
+async function czechStopName(p: LatLon): Promise<string | null> {
+  const res = await fetch(`/api/transitous/reverse-geocode?${new URLSearchParams({ place: `${p.lat},${p.lon}`, type: 'STOP', language: 'cs' })}`)
+  if (!res.ok) return null
+  const data: any[] = await res.json()
+  const hit = data.find((r) => /^cz-(JDF|CZPTT)/.test(String(r.id ?? '')) && distanceM(p, r) < 300)
+  return hit?.name ?? null
+}
+
+export interface IdosHint {
+  okres: string | null
+  /** český název místo názvu z dat dopravce */
+  name?: string | null
+}
+const idosResolved = new Map<string, IdosHint>()
+
+/** okres a případně český název z paměti (bez čekání) – undefined, pokud se ještě nedohledal */
+export const idosHint = (p: LatLon): IdosHint | undefined => idosResolved.get(okresKey(p))
+
+/** Dohledá pro odkazy do IDOS okres zastávek a u zahraničních dat (stopId mimo „cz-“) i český název. */
+export async function resolveIdos(points: (LatLon & { stopId?: string })[]): Promise<void> {
+  await Promise.all(
+    points.map(async (p) => {
+      if (idosResolved.has(okresKey(p))) return
+      const foreign = !!p.stopId && !p.stopId.startsWith('cz-')
+      const [okres, name] = await Promise.all([okresAt(p), foreign ? czechStopName(p).catch(() => null) : null])
+      idosResolved.set(okresKey(p), { okres, name })
+    }),
+  )
 }
 
 /* ---------- GPS souřadnice ---------- */

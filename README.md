@@ -2,6 +2,10 @@
 
 React + Vite + Tailwind CSS v4, dark mode, Spotify zelená (`#1DB954`). Instalovatelná PWA s offline cache.
 
+**Pokrytí:** spojení s přestupy, jízdné u dopravců a sdílená kola fungují **v celé ČR** (všechny zastávky z celostátních
+jízdních řádů přes Transitous). Odjezdové tabule v okolí bez zadaného cíle jsou zatím jen pro **PID** (Praha a Středočeský kraj),
+protože real-time odjezdy jiných regionů nemají jednotné otevřené API.
+
 ## Spuštění
 
 ```bash
@@ -13,25 +17,46 @@ npm run preview
 
 Geolokace v prohlížeči funguje jen přes **HTTPS nebo localhost**. Pro test na telefonu použij `npm run dev -- --host` + tunel (např. `cloudflared`, `ngrok`).
 
+## Hosting: Cloudflare Pages (zdarma, bez vodoznaku)
+
+Statické soubory z `dist/` + serverové funkce v `functions/` (Cloudflare Pages Functions, free plán: neomezený přenos,
+100 000 volání funkcí denně). Logika funkcí je ve sdíleném `server/`:
+
+| Cesta | Funkce | Proč přes server |
+|---|---|---|
+| `/api/transitous/*` | `server/transitous.ts` | Transitous vyžaduje `User-Agent` s kontaktem |
+| `/api/golemio/*` | `server/golemio.ts` | API klíč Golemio nesmí do prohlížeče |
+| `/api/fares/*` | `server/fares.ts` | RegioJet odmítá dotazy z cizích webů |
+
+```bash
+npx wrangler login                                            # jednou, otevře prohlížeč
+npx wrangler pages project create kudytam --production-branch main   # jednou
+npx wrangler pages secret put GOLEMIO_API_KEY --project-name kudytam # jednou
+npm run deploy                                                # build + nasazení
+npx wrangler pages dev dist                                   # lokálně i s funkcemi (klíč z .env)
+```
+`public/_headers` vypíná cache service workeru, aby se nová verze aplikace vždy načetla.
+
 ## Zdroje dat
 
 | Účel | API | Klíč |
 |---|---|---|
 | Zastávky, odjezdy (real-time), trasy spojů | [Golemio API](https://api.golemio.cz/docs/openapi/) – PID (Praha a Středočeský kraj) | zdarma: <https://api.golemio.cz/api-keys> |
 | Spojení s přestupy (odkud → kam) | [Transitous](https://transitous.org) (MOTIS 2) – PID, ČD a další dopravci, i se zpožděním | ne |
-| Vyhledávání stanic (odkud/kam) | [data.pid.cz](https://data.pid.cz/stops/json/stops.json) → `public/stops.json` (`npm run stops`) | ne |
+| Vyhledávání stanic PID (odkud/kam) | [data.pid.cz](https://data.pid.cz/stops/json/stops.json) → `public/stops.json` (`npm run stops`) | ne |
+| Zastávky v celé ČR, adresy, GPS (odkud/kam) | Transitous /geocode (české jízdní řády + OpenStreetMap) | ne |
 
-Transitous se volá přes edge funkci `netlify/edge-functions/transitous.ts`, protože jeho [podmínky](https://transitous.org/api/) vyžadují `User-Agent` s názvem aplikace a kontaktem. Ten prohlížeč sám nastavit neumí.
+Transitous se volá přes serverovou funkci `server/transitous.ts`, protože jeho [podmínky](https://transitous.org/api/) vyžadují `User-Agent` s názvem aplikace a kontaktem. Ten prohlížeč sám nastavit neumí.
 Podmínky Transitous: projekt musí být open-source a nekomerční, s viditelným odkazem na [zdroje dat](https://transitous.org/sources/). Spojení se obnovují nejvýš jednou za 90 s, aby se sdílená služba šetřila.
 
-Golemio klíč je jen na serveru. Prohlížeč volá `/api/golemio/*`, a to je Netlify edge funkce `netlify/edge-functions/golemio.ts`, která klíč přidá.
-- **Produkce:** `netlify env:set GOLEMIO_API_KEY <klíč>` a znovu nasadit.
+Golemio klíč je jen na serveru. Prohlížeč volá `/api/golemio/*`, a to je serverová funkce `server/golemio.ts`, která klíč přidá.
+- **Produkce:** `npx wrangler pages secret put GOLEMIO_API_KEY --project-name kudytam` a znovu nasadit.
 - **Lokálně:** do `.env` dej `GOLEMIO_API_KEY=<klíč>` (bez prefixu `VITE_`, takže se nedostane do bundlu).
 
 Bez klíče aplikace běží na **demo datech** (smyšlené odjezdy).
 
-> Jiné regiony ČR (IDS JMK, ODIS…) nemají jednotné otevřené real-time API. Stačí ale napsat nového poskytovatele
-> podle rozhraní `TransitProvider` v `src/lib/transit/types.ts`.
+> Odjezdové tabule jiných regionů ČR (IDS JMK, ODIS…) nemají jednotné otevřené real-time API. Stačí ale napsat nového
+> poskytovatele podle rozhraní `TransitProvider` v `src/lib/transit/types.ts`. Spojení do cíle fungují v celé ČR už teď.
 
 ## Spojení do cíle (s přestupy)
 
@@ -76,6 +101,13 @@ Bez klíče aplikace běží na **demo datech** (smyšlené odjezdy).
   jinak Google Play). Na iOS Lítačka nemá veřejný odkaz do aplikace, takže se otevře App Store s tlačítkem „Otevřít“.
   Konkrétní jízdenku v Lítačce předvybrat nejde (aplikace to zvenčí neumožňuje), proto aplikace ukáže, kterou vybrat.
 - Vlak ČD: tlačítko „Vyhledat v IDOS“ otevře IDOS s předvyplněnou trasou a časem (`f`, `t`, `date`, `time` v URL).
+  IDOS používá vlastní názvy míst, proto `idosPlace` v `fares.ts` (ověřeno proti idos.cz):
+  - název bez diakritiky – IDOS z URL zahodí znaky jako Ř, č, ě („Říčany“ → „R?cany“), hledá ale i bez nich,
+  - okres za středníkem („Ricany; Praha-vychod“, „Andel; Praha“) – rozliší stejně pojmenovaná místa
+    (okres se v detailu spojení dohledá přes Transitous /reverse-geocode),
+  - zahraniční názvy z dat FlixBusu („Prague (Main Railway Station)“) se nahradí českým názvem nejbližší zastávky,
+  - zkratka „nám.“ se rozvine na „náměstí“; bez parametru `fc`/`tc` (s ním IDOS hlásí „Takové místo neznáme“).
+  Autobusové zastávky s čárkou („Praha,ÚAN Florenc“) si IDOS sám převede na svůj tvar s dvěma čárkami.
   E-shop ČD předvyplnění neumí (formulář jejich hlavní stránky odmítá data zvenčí), takže tlačítko „E-shop ČD“ zkopíruje stanice do schránky.
 
 ### Dopravci po celé ČR
@@ -89,7 +121,7 @@ Bez klíče aplikace běží na **demo datech** (smyšlené odjezdy).
 - **Ostatní** (Leo Express, Arriva, ZSSK, krajští dopravci, MHD mimo PID – např. IDS JMK v Brně): web dopravce a IDOS
   s předvyplněnou trasou a časem. Cenu ukáže dopravce.
 
-RegioJet odmítá dotazy z prohlížeče cizích webů, proto ceny jdou přes edge funkci `netlify/edge-functions/fares.ts`
+RegioJet odmítá dotazy z prohlížeče cizích webů, proto ceny jdou přes serverovou funkci `server/fares.ts`
 (`/api/fares/*`, jen povolené cesty, cache 5 min, seznam stanic 24 h).
 Dálkové spoje, které jen projíždějí pásmy PID (rychlík do Brna), a komerční dopravci (FlixBus, RegioJet, Leo Express)
 se nepočítají jako PID – jízdenka PID na ně neplatí.
@@ -102,9 +134,10 @@ Cesta pěšky, sdíleným kolem a taxi se počítá od zvoleného odjezdu, nebo 
 (`leaveAt` v `journeys.ts`). Volná kola u cesty víc než 20 min dopředu jsou jen ověřená teď – aplikace na to upozorní.
 Uplynulý čas se při hledání vrátí na „Teď“. Odjezdy v okolí (bez cíle) jsou vždy aktuální.
 
-## Cíl: stanice, adresa nebo GPS
+## Odkud a kam: zastávka v ČR, adresa nebo GPS
 
-V kolonce **Kam** (a u domova) jde zadat stanici PID, adresu (Transitous /geocode nad OpenStreetMap) nebo GPS souřadnice:
+V kolonkách **Odkud** i **Kam** (a u domova) jde zadat stanici PID, zastávku nebo nádraží kdekoli v ČR (Transitous /geocode,
+jen české jízdní řády), adresu (OpenStreetMap) nebo GPS souřadnice:
 desetinné stupně (i s čárkou), stupně/minuty/vteřiny, světové strany (N/E i s. š./v. d.) a vložený odkaz z Google Map nebo Mapy.cz.
 K GPS bodu se dohledá nejbližší adresa (/reverse-geocode).
 

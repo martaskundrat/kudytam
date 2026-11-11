@@ -1,16 +1,13 @@
 /**
- * Proxy pro Golemio API. API klíč je uložený jen na serveru (proměnná GOLEMIO_API_KEY
- * v Netlify), takže se nedostane do prohlížeče a nehrozí problémy s CORS.
+ * Proxy pro Golemio API. API klíč je uložený jen na serveru (tajná proměnná GOLEMIO_API_KEY
+ * v Cloudflare Pages), takže se nedostane do prohlížeče a nehrozí problémy s CORS.
  *
  *   GET /api/golemio/status          -> { configured: boolean }
  *   GET /api/golemio/v2/...          -> přeposláno na https://api.golemio.cz/v2/...
  */
-declare const Netlify: { env: { get(name: string): string | undefined } }
-
 const ALLOWED = ['/v2/pid/departureboards', '/v2/gtfs/stops', '/v2/gtfs/trips/']
 
-export default async (req: Request) => {
-  const key = Netlify.env.get('GOLEMIO_API_KEY')
+export async function golemio(req: Request, key: string | undefined): Promise<Response> {
   const url = new URL(req.url)
   const path = url.pathname.replace(/^\/api\/golemio/, '')
 
@@ -27,5 +24,3 @@ export default async (req: Request) => {
   headers.set('Cache-Control', path.startsWith('/v2/pid/') ? 'public, max-age=15' : 'public, max-age=3600')
   return new Response(upstream.body, { status: upstream.status, headers })
 }
-
-export const config = { path: '/api/golemio/*' }

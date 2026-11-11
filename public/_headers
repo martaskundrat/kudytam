@@ -1,0 +1,3 @@
+# Cloudflare Pages: service worker se nesmí cachovat, jinak by se nová verze aplikace nenačetla
+/sw.js
+  Cache-Control: no-cache

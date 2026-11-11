@@ -8,7 +8,7 @@
  * - Ostatní (Leo Express, Arriva, ZSSK, krajští dopravci, MHD mimo PID): web dopravce a IDOS
  *   s předvyplněnou trasou a časem – cenu ukáže dopravce.
  *
- * Volá se přes proxy /api/fares/* (netlify/edge-functions/fares.ts).
+ * Volá se přes proxy /api/fares/* (server/fares.ts).
  */
 import { distanceM } from './geo'
 import type { TransitLeg } from './journeys'

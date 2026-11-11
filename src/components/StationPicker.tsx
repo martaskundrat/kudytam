@@ -14,7 +14,7 @@ interface Props {
   emptyLabel: string
   /** nabídnout „Moje poloha“ (null) jako volbu */
   allowCurrent?: boolean
-  /** hledat i adresy a místa (nejen stanice PID) */
+  /** hledat i adresy, místa, zastávky v celé ČR a GPS (nejen stanice PID) */
   addresses?: boolean
   near?: LatLon | null
   onChange: (p: Place | null) => void
@@ -200,10 +200,12 @@ function SearchOverlay({
         )}
         {q.trim().length < 2 && (
           <li className="px-4 py-3 text-sm text-subtle">
-            {addresses ? 'Napiš adresu (ulice a číslo), název stanice nebo GPS souřadnice (např. 50.0786, 14.4345).' : 'Napiš aspoň 2 písmena názvu stanice.'}
+            {addresses
+              ? 'Napiš zastávku nebo nádraží kdekoli v ČR, adresu (ulice a číslo) nebo GPS souřadnice (např. 50.0786, 14.4345).'
+              : 'Napiš aspoň 2 písmena názvu stanice.'}
           </li>
         )}
-        {addresses && results.length > 0 && <li className="px-4 pt-2 pb-1 text-[11px] font-bold tracking-wider text-subtle uppercase">Stanice</li>}
+        {addresses && results.length > 0 && <li className="px-4 pt-2 pb-1 text-[11px] font-bold tracking-wider text-subtle uppercase">Stanice PID</li>}
         {results.map((r) => (
           <li key={r.name}>
             <button onClick={() => onPick(r)} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-highlight">
@@ -218,12 +220,12 @@ function SearchOverlay({
           </li>
         ))}
         {addresses && (addr.length > 0 || addrLoading) && (
-          <li className="px-4 pt-3 pb-1 text-[11px] font-bold tracking-wider text-subtle uppercase">Adresy {addrLoading && '· hledám…'}</li>
+          <li className="px-4 pt-3 pb-1 text-[11px] font-bold tracking-wider text-subtle uppercase">Zastávky v ČR, adresy a místa {addrLoading && '· hledám…'}</li>
         )}
         {addr.map((r) => (
           <li key={`a-${r.lat}-${r.lon}`}>
             <button onClick={() => onPick(r)} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-highlight">
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-highlight text-lg">🏠</span>
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-highlight text-lg">{r.detail?.startsWith('Zastávka') ? '🚏' : '🏠'}</span>
               <span className="min-w-0">
                 <span className="block truncate font-semibold">{r.name}</span>
                 {r.detail && <span className="block truncate text-xs text-subtle">{r.detail}</span>}
@@ -231,7 +233,7 @@ function SearchOverlay({
             </button>
           </li>
         ))}
-        {addresses && addr.length > 0 && <li className="px-4 pt-2 text-[10px] text-subtle">Adresy © OpenStreetMap contributors</li>}
+        {addresses && addr.length > 0 && <li className="px-4 pt-2 text-[10px] text-subtle">Adresy © OpenStreetMap contributors · zastávky Transitous</li>}
       </ul>
     </div>
   )

@@ -9,6 +9,7 @@
  */
 import { carrierOf, legKey, type CarrierQuote } from './carriers'
 import { distanceM } from './geo'
+import { idosHint } from './geocode'
 import type { Journey, Leg, TransitLeg } from './journeys'
 import { chooseTicket, type TicketDecision } from './tickets'
 import type { PassengerCategory, Settings } from '../types'
@@ -119,14 +120,31 @@ export interface BuyAction {
 }
 
 /**
- * IDOS s předvyplněnou trasou a časem (parametry f/t/date/time přijímá v URL).
- * E-shop ČD ani aplikace Lítačka předvyplnění zvenčí neumožňují.
+ * Název místa pro odkaz do IDOS. Ověřeno proti idos.cz:
+ * - IDOS čte parametry z URL bez českých znaků (Ř, č, ě, š, ž… zahodí: „Říčany“ → „R?cany“),
+ *   diakritiku ale při hledání nevyžaduje → posíláme název bez diakritiky,
+ * - stejně pojmenovaná místa rozliší podle okresu ve tvaru „název; okres“ („Ricany; Praha-vychod“,
+ *   u Prahy „Andel; Praha“); okres se dohledá předem (resolveOkres), jinak jde název bez něj,
+ * - názvy autobusových zastávek s čárkou („Praha,ÚAN Florenc“) si IDOS sám převede na svůj tvar
+ *   s dvěma čárkami („Praha,,ÚAN Florenc“).
  */
-export function idosLink(from: string, to: string, at: number): string {
+export function idosPlace(p: { name: string; lat: number; lon: number }): string {
+  const fold = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  const hint = idosHint(p)
+  // zkratky, které IDOS nerozvine („Nám. Republiky“ nenajde, „Náměstí Republiky“ ano)
+  const name = (hint?.name ?? p.name).replace(/\bnám\.\s*/gi, (m) => (m[0] === 'N' ? 'Náměstí ' : 'náměstí '))
+  return fold(hint?.okres ? `${name}; ${hint.okres}` : name)
+}
+
+/**
+ * IDOS s předvyplněnou trasou a časem (parametry f/t/date/time v URL; parametr fc/tc s typem místa
+ * IDOS naopak rozbije – „Takové místo neznáme“). E-shop ČD ani Lítačka předvyplnění zvenčí neumožňují.
+ */
+export function idosLink(from: { name: string; lat: number; lon: number }, to: { name: string; lat: number; lon: number }, at: number): string {
   const d = new Date(at)
   const date = `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`
   const time = d.toTimeString().slice(0, 5)
-  const q = new URLSearchParams({ f: from, fc: '1', t: to, tc: '1', date, time })
+  const q = new URLSearchParams({ f: idosPlace(from), t: idosPlace(to), date, time })
   return `https://idos.cz/vlakyautobusymhdvse/spojeni/vysledky/?${q}`
 }
 
@@ -193,7 +211,7 @@ function cdPart(legs: TransitLeg[], settings: Settings): FarePart {
     buy: [
       {
         label: 'Vyhledat v IDOS',
-        href: idosLink(legs[0].from.name, legs[legs.length - 1].to.name, legs[0].from.time),
+        href: idosLink(legs[0].from, legs[legs.length - 1].to, legs[0].from.time),
         hint: `Předvyplněno: ${span(legs)}, odjezd ${new Date(legs[0].from.time).toTimeString().slice(0, 5)}.`,
         primary: true,
       },
@@ -221,7 +239,7 @@ function otherPart(l: TransitLeg, quotes?: Quotes): FarePart {
   const covers = `${l.line} · ${l.from.name} → ${l.to.name}`
   const idos: BuyAction = {
     label: 'Vyhledat v IDOS',
-    href: idosLink(l.from.name, l.to.name, l.from.scheduled),
+    href: idosLink(l.from, l.to, l.from.scheduled),
     hint: `IDOS s předvyplněnou trasou ${l.from.name} → ${l.to.name}, odjezd ${new Date(l.from.scheduled).toTimeString().slice(0, 5)}.`,
   }
   const buy: BuyAction[] = []

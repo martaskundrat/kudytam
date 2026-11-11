@@ -211,8 +211,9 @@ export default function App() {
             icon={<IconPin />}
             value={draftOrigin}
             emptyLabel="Moje poloha"
-            placeholder="Odkud – název stanice"
+            placeholder="Odkud – zastávka, adresa, GPS"
             allowCurrent
+            addresses
             near={position}
             onChange={setDraftOrigin}
           />
@@ -221,7 +222,7 @@ export default function App() {
             label="Kam"
             icon={<IconFlag />}
             value={draftDest}
-            emptyLabel="Cíl – stanice, adresa nebo GPS (nepovinné)"
+            emptyLabel="Cíl – zastávka v ČR, adresa nebo GPS (nepovinné)"
             placeholder="Kam – stanice, adresa, GPS"
             addresses
             near={draftOrigin ?? position}
@@ -375,6 +376,9 @@ export default function App() {
             {result.groups.length === 0 && (
               <div className="py-12 text-center text-muted">
                 <IconBus className="mx-auto mb-3 size-12 text-subtle" />V okolí nejsou žádné zastávky PID.
+                <p className="mt-2 text-sm text-subtle">
+                  Odjezdy v okolí zatím umíme jen pro PID (Praha a Středočeský kraj). Zadej cíl – spojení hledáme v celé ČR.
+                </p>
               </div>
             )}
 

@@ -4,6 +4,7 @@ import { fetchTrip, firstWalk, leaveAt, shiftLeg, transitLegs, tripPosition, typ
 import { settingsStore, speedKmh, useStore } from '../lib/store'
 import { carrierQuote, legKey, quotable } from '../lib/carriers'
 import { fareOptions, type Quotes } from '../lib/fares'
+import { resolveIdos } from '../lib/geocode'
 import type { PassengerCategory } from '../types'
 import { FareComparison } from './FareComparison'
 import type { BikeOption } from '../lib/mobility'
@@ -38,14 +39,19 @@ export function recommend(journeys: Journey[], nearRadius: number, now: number):
  * Živé ceny dopravců (FlixBus, RegioJet) pro úseky spojení. Dotazy se sdílejí v cache
  * (jeden dotaz = všechny spoje dne mezi dvěma stanicemi), takže karty seznamu nezatěžují API.
  */
-function useQuotes(j: Journey | null, category: PassengerCategory): Quotes | undefined {
+function useQuotes(j: Journey | null, category: PassengerCategory, withIdos = false): Quotes | undefined {
   const [quotes, setQuotes] = useState<{ key: string; q: Quotes } | null>(null)
   const legs = j ? transitLegs(j).filter(quotable) : []
-  const key = legs.map(legKey).join('|') + '#' + category
+  // v detailu spojení dohledej okresy (a české názvy) zastávek – pro přesné odkazy do IDOS
+  const idosPoints = withIdos && j ? transitLegs(j).flatMap((l) => [l.from, l.to]) : []
+  const key = legs.map(legKey).join('|') + '#' + category + '#' + idosPoints.map((p) => `${p.lat},${p.lon}`).join('|')
   useEffect(() => {
-    if (!legs.length) return
+    if (!legs.length && !idosPoints.length) return
     let alive = true
-    Promise.all(legs.map((l) => carrierQuote(l, category).then((r) => [legKey(l), r] as const))).then((e) => alive && setQuotes({ key, q: new Map(e) }))
+    Promise.all([
+      Promise.all(legs.map((l) => carrierQuote(l, category).then((r) => [legKey(l), r] as const))),
+      resolveIdos(idosPoints),
+    ]).then(([e]) => alive && setQuotes({ key, q: new Map(e) }))
     return () => {
       alive = false
     }
@@ -205,7 +211,7 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
   }, [!!journey])
 
   const shown = journey ? (override?.baseId === journey.id ? override.j : journey) : null
-  const quotes = useQuotes(shown, settings.category)
+  const quotes = useQuotes(shown, settings.category, true)
   if (!journey || !shown) return null
   const fares = fareOptions(shown, settings, quotes)
   const departed = shown.start < now - 30000
