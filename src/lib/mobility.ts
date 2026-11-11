@@ -110,6 +110,8 @@ interface GbfsStation {
   renting: boolean
   returning: boolean
   virtual: boolean
+  /** parkovací místo bez zámků (GBFS bez `capacity`, např. Brno) – kolo se dá vrátit vždy */
+  dockless: boolean
   /** odkazy do aplikace přímo na stanici (GBFS rental_uris) */
   uris?: { android?: string; ios?: string; web?: string }
   planId?: string
@@ -186,6 +188,7 @@ async function loadSystem(sys: BikeSystem): Promise<SystemData> {
       renting: x.is_renting !== false && x.is_installed !== false,
       returning: x.is_returning !== false && x.is_installed !== false,
       virtual: !!s.is_virtual_station,
+      dockless: !!s.is_virtual_station || s.capacity === undefined || s.capacity === null,
       uris: s.rental_uris,
       planId: planAt.get(s.station_id),
       regionId: s.region_id ?? undefined,
@@ -260,7 +263,7 @@ const nearest = (list: GbfsStation[], p: LatLon, radius: number) =>
 /** Nejrychlejší dvojice stojanů: kolo na stojanu u `from`, volné místo na stojanu u `to`. */
 function bestPair(sys: BikeSystem, data: SystemData, from: LatLon, to: LatLon, walkKmh: number, startRadius: number, endRadius: number, rider: Rider): BikeOption | null {
   const starts = nearest(data.stations.filter((s) => s.renting && s.bikes > 0), from, startRadius)
-  const ends = nearest(data.stations.filter((s) => s.returning && (s.docks > 0 || s.virtual)), to, endRadius)
+  const ends = nearest(data.stations.filter((s) => s.returning && (s.docks > 0 || s.dockless)), to, endRadius)
   let best: BikeOption | null = null
   for (const a of starts) {
     for (const b of ends) {
@@ -329,6 +332,23 @@ export async function bikeOptions(origin: LatLon, dest: LatLon, walkKmh: number,
     if (best && best.totalMin < walkOnly) out.push(best)
   }
   return out
+}
+
+/** Leží bod v oblasti některého systému sdílených kol? */
+export const bikeAreaAt = async (p: LatLon) => systemsAt(p, FEEDER_START_M).length > 0
+
+/**
+ * Sdílené kolo na konec cesty: ze stojanu u výstupní zastávky na stojan u cíle.
+ * Počty kol jsou z teď – po příjezdu se mohou lišit.
+ */
+export async function bikeFromStop(stop: LatLon, dest: LatLon, walkKmh: number, rider: Rider): Promise<BikeOption | null> {
+  let best: BikeOption | null = null
+  for (const sys of systemsAt(stop, FEEDER_END_M).filter((s) => inArea(s, dest, FEEDER_START_M))) {
+    const data = await loaded(sys)
+    const b = data && bestPair(sys, data, stop, dest, walkKmh, FEEDER_END_M, FEEDER_START_M, rider)
+    if (b && (!best || b.totalMin < best.totalMin)) best = b
+  }
+  return best
 }
 
 /** Je u startu stojan s kolem? (aby se zbytečně nevyhledávala spojení s kolem) */

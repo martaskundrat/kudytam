@@ -300,21 +300,32 @@ export function fareOptions(j: Journey, settings: Settings, quotes?: Quotes): Fa
   }
 
   // sdílené kolo na začátku cesty se platí zvlášť – přidej ho ke každé variantě
-  const bike = j.legs.find((l) => l.kind === 'walk' && l.bike)
-  const bikePart: FarePart | null =
-    bike?.kind === 'walk' && bike.bike
-      ? {
-          title: `Sdílené kolo ${bike.bike.brand} ${bike.bike.area}`,
-          covers: `${bike.bike.from.name} → ${bike.bike.to.name} · ~${bike.bike.rideMin} min`,
-          price: bike.bike.price,
-          note: bike.bike.freeNote,
-          buy: [{ label: `Půjčit v aplikaci ${bike.bike.brand}`, href: bike.bike.open.href, hint: bike.bike.open.hint, primary: true }],
-        }
-      : null
-  const withBike = (o: FareOption): FareOption =>
-    bikePart
-      ? { ...o, parts: [bikePart, ...o.parts], total: o.total + (bikePart.price ?? 0), incomplete: o.incomplete || bikePart.price === null }
-      : o
+  // sdílená kola na začátku / konci cesty
+  const bikeParts: FarePart[] = []
+  j.legs.forEach((l, i) => {
+    if (l.kind !== 'walk' || !l.bike) return
+    const b = l.bike
+    const late = i > 0 && l.bikeLater
+    bikeParts.push({
+      title: `Sdílené kolo ${b.brand} ${b.area}${i > 0 ? ' (do cíle)' : ''}`,
+      covers: `${b.from.name} → ${b.to.name} · ~${b.rideMin} min`,
+      price: b.price,
+      note: [b.freeNote, late ? 'Kolo si půjčíš až po příjezdu – počet kol je z teď, může se změnit.' : ''].filter(Boolean).join(' ') || undefined,
+      buy: [{ label: `Půjčit v aplikaci ${b.brand}`, href: b.open.href, hint: b.open.hint, primary: true }],
+    })
+  })
+  const bikeTotal = bikeParts.reduce((s, p) => s + (p.price ?? 0), 0)
+  const withBike = (o: FareOption): FareOption => {
+    if (!bikeParts.length) return o
+    const first = j.legs[0]?.kind === 'walk' && j.legs[0].bike ? [bikeParts[0]] : []
+    const rest = bikeParts.slice(first.length)
+    return {
+      ...o,
+      parts: [...first, ...o.parts, ...rest],
+      total: o.total + bikeTotal,
+      incomplete: o.incomplete || bikeParts.some((p) => p.price === null),
+    }
+  }
 
   // stejné varianty (např. SMS = aplikace) nezobrazuj dvakrát; nejlevnější první
   const seen = new Set<string>()

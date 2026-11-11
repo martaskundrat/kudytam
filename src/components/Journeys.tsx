@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type TouchEvent } from 'react'
 import { formatDistance } from '../lib/geo'
-import { fetchTrip, firstWalk, shiftLeg, transitLegs, tripPosition, type Journey, type TransitLeg, type TripDetail } from '../lib/journeys'
+import { fetchTrip, firstWalk, shiftLeg, transitLegs, tripPosition, type Journey, type TransitLeg, type TripDetail, type WalkLeg } from '../lib/journeys'
 import { settingsStore, speedKmh, useStore } from '../lib/store'
 import { carrierQuote, legKey, quotable } from '../lib/carriers'
 import { fareOptions, type Quotes } from '../lib/fares'
@@ -91,7 +91,7 @@ export function JourneyCard({ j, now, pick, onSelect }: { j: Journey; now: numbe
   const quotes = useQuotes(j, settings.category)
   const cheapest = fareOptions(j, settings, quotes)[0]
   const firstTransit = transitLegs(j)[0]
-  const bikeLeg = firstWalk(j)
+  const bikeLegs = j.legs.map((l, i) => ({ l, i })).filter((x): x is { l: WalkLeg & { bike: BikeOption }; i: number } => x.l.kind === 'walk' && !!x.l.bike)
   const missed = j.start < now - 30000
   const recommended = pick?.journey.id === j.id
   const delay = firstTransit?.delayMin
@@ -136,13 +136,13 @@ export function JourneyCard({ j, now, pick, onSelect }: { j: Journey; now: numbe
               : `od ${cheapest.estimated ? '~' : ''}${fmtKc(cheapest.total)}${cheapest.incomplete ? ' +' : ''}`}
         </span>
       </div>
-      {bikeLeg?.bike && (
-        <p className="mt-2 text-sm text-brand">
-          Sdíleným kolem {bikeLeg.bike.brand} ze stojanu {bikeLeg.bike.from.name} ({bikeLeg.bike.from.bikes}{' '}
-          {bikeLeg.bike.from.bikes === 1 ? 'kolo' : bikeLeg.bike.from.bikes < 5 ? 'kola' : 'kol'}) k zastávce {firstTransit?.from.name} ·{' '}
-          {bikeLeg.bike.price === null ? 'cena v aplikaci' : fmtKc(bikeLeg.bike.price)}
+      {bikeLegs.map(({ l, i }) => (
+        <p key={i} className="mt-2 text-sm text-brand">
+          {i === 0 ? 'Na začátku' : 'Do cíle'} sdíleným kolem {l.bike.brand} ze stojanu {l.bike.from.name} ({bikesLabel(l.bike.from.bikes)}
+          {l.bikeLater ? ' teď' : ''}){i === 0 ? ` k zastávce ${l.to.name}` : ''} ·{' '}
+          {l.bike.price === null ? 'cena v aplikaci' : fmtKc(l.bike.price)}
         </p>
-      )}
+      ))}
       {recommended && pick.savedMin !== null && pick.savedMin > 0 && (
         <p className="mt-2 text-sm text-brand">
           Dojdi {firstWalk(j)?.durationMin} min na {firstTransit?.from.name} a dorazíš o <b>{pick.savedMin} min</b> dřív než z nejbližší zastávky.
@@ -271,7 +271,7 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
         {shown.legs.map((l, i) =>
           l.kind === 'walk' ? (
             l.bike ? (
-              <BikeLegRow key={`b${i}`} bike={l.bike} stop={l.to.name} />
+              <BikeLegRow key={`b${i}`} bike={l.bike} stop={i === 0 ? l.to.name : l.from.name} atEnd={i > 0} later={!!l.bikeLater} />
             ) : l.durationMin < 1 ? null : (
               <li key={`w${i}`} className="flex items-center gap-3 py-1.5 pl-2 text-sm text-muted">
                 <IconWalk className="size-4" />
@@ -302,7 +302,9 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
 }
 
 /** Úsek sdíleným kolem v detailu spojení: kde kolo vzít, kam ho vrátit, tlačítko do aplikace. */
-function BikeLegRow({ bike, stop }: { bike: BikeOption; stop: string }) {
+const bikesLabel = (n: number) => `${n} ${n === 1 ? 'kolo' : n < 5 ? 'kola' : 'kol'}`
+
+function BikeLegRow({ bike, stop, atEnd, later }: { bike: BikeOption; stop: string; atEnd: boolean; later: boolean }) {
   const nav =
     'https://mapy.com/fnc/v1/route?' +
     new URLSearchParams({ mapset: 'outdoor', start: `${bike.from.lon},${bike.from.lat}`, end: `${bike.to.lon},${bike.to.lat}`, routeType: 'bike_road', navigate: 'true' })
@@ -313,6 +315,11 @@ function BikeLegRow({ bike, stop }: { bike: BikeOption; stop: string }) {
         <span className="ml-auto font-bold">{bike.price === null ? '' : fmtKc(bike.price)}</span>
       </div>
       <ol className="mt-1.5 space-y-0.5 text-muted">
+        {atEnd && (
+          <li>
+            Vystup na zastávce <span className="text-white">{stop}</span>
+          </li>
+        )}
         {bike.from.walkMin >= 1 && (
           <li>
             Pěšky {bike.from.walkMin} min na stojan <span className="text-white">{bike.from.name}</span>
@@ -321,17 +328,27 @@ function BikeLegRow({ bike, stop }: { bike: BikeOption; stop: string }) {
         <li>
           {bike.from.walkMin < 1 && <>Ze stojanu <span className="text-white">{bike.from.name}</span> </>}
           <span className="text-brand">
-            ({bike.from.bikes} {bike.from.bikes === 1 ? 'kolo' : bike.from.bikes < 5 ? 'kola' : 'kol'})
+            ({bikesLabel(bike.from.bikes)}
+            {later ? ' teď' : ''})
           </span>{' '}
           na kole ~{bike.rideMin} min na <span className="text-white">{bike.to.name}</span>
-          {!bike.to.virtual && <span className="text-subtle"> ({bike.to.docks} volných míst)</span>}
+          <span className="text-subtle"> ({bike.to.dockless ? 'parkovací místo, vrátíš kdykoli' : `${bike.to.docks} volných míst`})</span>
         </li>
-        <li>
-          {bike.to.walkMin >= 1 ? `Pěšky ${bike.to.walkMin} min na zastávku ` : 'Zastávka '}
-          <span className="text-white">{stop}</span>
-        </li>
+        {atEnd ? (
+          bike.to.walkMin >= 1 && <li>Pěšky {bike.to.walkMin} min do cíle</li>
+        ) : (
+          <li>
+            {bike.to.walkMin >= 1 ? `Pěšky ${bike.to.walkMin} min na zastávku ` : 'Zastávka '}
+            <span className="text-white">{stop}</span>
+          </li>
+        )}
       </ol>
       {bike.freeNote && <p className="mt-1 text-xs text-brand">{bike.freeNote}</p>}
+      {later && (
+        <p className="mt-1 text-xs text-amber-300">
+          Kolo si půjčíš až po příjezdu. Počet kol je ověřený teď, do té doby se může změnit – zkontroluj ho v aplikaci, než vystoupíš.
+        </p>
+      )}
       <div className="mt-2 flex flex-wrap gap-2">
         <a
           href={bike.open.href}

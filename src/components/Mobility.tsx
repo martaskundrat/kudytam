@@ -94,7 +94,7 @@ export function BikeCards({
               </li>
               <li>
                 Na kole ~{o.rideMin} min · {formatDistance(o.rideM)} na <span className="text-white">{o.to.name}</span>
-                {!o.to.virtual && <span className="text-subtle"> ({o.to.docks} volných stojanů)</span>}
+                <span className="text-subtle"> ({o.to.dockless ? 'parkovací místo, vrátíš kdykoli' : `${o.to.docks} volných stojanů`})</span>
               </li>
               {o.to.walkMin >= 1 && <li>Pěšky {o.to.walkMin} min do cíle</li>}
             </ol>
