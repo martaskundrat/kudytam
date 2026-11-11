@@ -87,7 +87,8 @@ K GPS bodu se dohledá nejbližší adresa (/reverse-geocode).
 ## Cesta pěšky
 
 Když je cíl vzdušnou čarou do „širšího okolí“ (menu), nebo když chůze (do 45 min) není o víc než 10 min pomalejší než nejrychlejší MHD, nabídne se i cesta pěšky (Transitous `direct`, se zvolenou rychlostí)
-se srovnáním příjezdu s nejrychlejší MHD a tlačítkem pro navigaci v mapách.
+se srovnáním příjezdu s nejrychlejší MHD a tlačítkem **Navigovat**. Otevře [Mapy.com URL](https://developer.mapy.com/further-uses-of-mapycz/mapy-cz-url/)
+(`/fnc/v1/route`, `routeType=foot_fast` / `bike_road`, `navigate=true`). V telefonu se spustí aplikace Mapy.com, pokud je nainstalovaná, jinak web.
 
 ## Domov
 

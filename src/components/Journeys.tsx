@@ -516,8 +516,18 @@ export function WalkCard({
   const bestTransit = live.reduce<Journey | null>((a, b) => (!a || b.end < a.end ? b : a), null)
   const diff = bestTransit ? Math.round((bestTransit.end - arrival) / 60000) : null
   const faster = diff === null || diff >= 0
-  // Google Maps „directions“ URL je veřejně zdokumentovaná a v telefonu otevře aplikaci Mapy
-  const nav = `https://www.google.com/maps/dir/?api=1&origin=${from.lat},${from.lon}&destination=${to.lat},${to.lon}&travelmode=${mode === 'bike' || mode === 'scooter' ? 'bicycling' : 'walking'}`
+  // Mapy.com URL API (https://developer.mapy.com/further-uses-of-mapycz/mapy-cz-url/):
+  // v telefonu otevře aplikaci Mapy.com (není-li nainstalovaná, web); navigate=true rovnou spustí
+  // navigaci (aplikace od dubna 2024). Souřadnice jsou v pořadí lon,lat.
+  const nav =
+    'https://mapy.com/fnc/v1/route?' +
+    new URLSearchParams({
+      mapset: 'outdoor',
+      start: `${from.lon},${from.lat}`,
+      end: `${to.lon},${to.lat}`,
+      routeType: mode === 'bike' || mode === 'scooter' ? 'bike_road' : 'foot_fast',
+      navigate: 'true',
+    })
   return (
     <div className={`rounded-2xl p-4 ${faster ? 'bg-gradient-to-br from-brand/25 to-surface ring-1 ring-brand' : 'bg-surface'}`}>
       {faster && (
