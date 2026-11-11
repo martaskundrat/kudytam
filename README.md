@@ -148,6 +148,8 @@ V zahraničí (podle zjednodušeného obrysu hranic ČR, `inCzechia` v `geo.ts`)
   Živé ceny FlixBusu a RegioJetu zůstávají (nejsou to odhady). Odhad ceny ČD jen pro úseky celé v ČR; IDOS jen v ČR.
 - **taxi** bez odhadu ceny a bez Liftaga (jezdí jen v ČR),
 - **navigace**: vždy Mapy.com, v zahraničí navíc **Google Maps** (`NavButtons`, Google Maps URLs `/maps/dir/?api=1`).
+  Navigace pěšky je i **na zastávku**: v detailu spojení u úseků pěšky (na zastávku, na přestup, do cíle; ne u krátkých
+  přechodů mezi nástupišti) a v detailu odjezdu z okolí.
 
 **Letiště:** OpenStreetMap dává letiště jako bod uprostřed letištní plochy (v Mnichově 4 km od terminálů), takže
 vyhledávač z konečné autobusu „dovážel“ k tomu bodu dalšími spoji. Po výběru letiště ve vyhledávání se proto cíl přesune

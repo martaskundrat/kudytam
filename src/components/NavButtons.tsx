@@ -30,10 +30,25 @@ export function googleLink(from: LatLon, to: LatLon, mode: NavMode): string {
 /**
  * Navigovat: standardně Mapy.com; když trasa vede mimo ČR, i Google Maps (v zahraničí bývají přesnější).
  */
-export function NavButtons({ from, to, mode, label = 'Navigovat', primary = false }: { from: LatLon; to: LatLon; mode: NavMode; label?: string; primary?: boolean }) {
+export function NavButtons({
+  from,
+  to,
+  mode,
+  label = 'Navigovat',
+  primary = false,
+  small = false,
+}: {
+  from: LatLon
+  to: LatLon
+  mode: NavMode
+  label?: string
+  primary?: boolean
+  /** menší tlačítka (v seznamu úseků) */
+  small?: boolean
+}) {
   const abroad = !inCzechia(from) || !inCzechia(to)
   const cls = (main: boolean) =>
-    `inline-block rounded-full px-4 py-2 text-sm font-bold transition active:scale-95 ${
+    `inline-block rounded-full ${small ? 'px-3 py-1 text-xs' : 'px-4 py-2 text-sm'} font-bold transition active:scale-95 ${
       main ? 'bg-brand text-black hover:bg-brand-hover' : 'ring-1 ring-zinc-500 hover:ring-white'
     }`
   return (

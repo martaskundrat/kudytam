@@ -1,12 +1,24 @@
 import { formatDistance } from '../lib/geo'
 import { settingsStore, useStore } from '../lib/store'
 import { quote } from '../lib/tickets'
-import type { Option, Place } from '../types'
+import type { LatLon, Option, Place } from '../types'
+import { NavButtons } from './NavButtons'
 import { leaveIn } from './Departures'
 import { TicketInfo } from './TicketInfo'
 import { fmtTime, IconWalk, LineBadge, minutesLabel, Sheet, useNow, VEHICLE_LABEL } from './ui'
 
-export function RideSheet({ option, destination, onClose }: { option: Option | null; destination: Place | null; onClose: () => void }) {
+export function RideSheet({
+  option,
+  destination,
+  origin,
+  onClose,
+}: {
+  option: Option | null
+  destination: Place | null
+  /** odkud se hledalo (poloha / výchozí místo) – pro navigaci na zastávku */
+  origin?: LatLon | null
+  onClose: () => void
+}) {
   const settings = useStore(settingsStore)
   const now = useNow(5000)
   if (!option) return null
@@ -33,6 +45,11 @@ export function RideSheet({ option, destination, onClose }: { option: Option | n
           <div className={`text-sm ${l < 0 ? 'text-red-400' : l < 1 ? 'text-brand' : 'text-muted'}`}>
             {l < 0 ? 'Tenhle spoj už asi nestihneš.' : l < 1 ? 'Vyraž hned!' : `Vyraž v ${fmtTime(now + l * 60000)} (za ${Math.floor(l)} min)`}
           </div>
+          {origin && option.walkMeters >= 100 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              <NavButtons from={origin} to={d.stop} mode="foot" small label="Navigovat na zastávku" />
+            </div>
+          )}
         </li>
         <li>
           <span className="absolute -left-[9px] mt-1 size-4 rounded-full bg-brand" />

@@ -446,7 +446,7 @@ export default function App() {
       </main>
 
       <Menu open={menuOpen} onClose={() => setMenuOpen(false)} liveData={!!provider && !provider.isDemo} />
-      <RideSheet option={selected} destination={null} onClose={() => setSelected(null)} />
+      <RideSheet option={selected} destination={null} origin={result?.origin} onClose={() => setSelected(null)} />
       <JourneySheet
         journey={selectedJourney}
         onClose={() => setSelectedId(null)}

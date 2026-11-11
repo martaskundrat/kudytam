@@ -263,10 +263,26 @@ export function JourneySheet({ journey, nav, onClose }: { journey: Journey | nul
             l.bike ? (
               <BikeLegRow key={`b${i}`} bike={l.bike} stop={i === 0 ? l.to.name : l.from.name} atEnd={i > 0} later={!!l.bikeLater} />
             ) : l.durationMin < 1 ? null : (
-              <li key={`w${i}`} className="flex items-center gap-3 py-1.5 pl-2 text-sm text-muted">
-                <IconWalk className="size-4" />
-                Pěšky {l.durationMin} min{l.meters > 0 && ` · ${formatDistance(l.meters)}`}
-                {i === 0 && l.to.name ? ` na ${l.to.name}` : i === shown.legs.length - 1 ? ' do cíle' : ' (přestup)'}
+              <li key={`w${i}`} className="py-1.5 pl-2 text-sm text-muted">
+                <div className="flex items-center gap-3">
+                  <IconWalk className="size-4" />
+                  <span>
+                    Pěšky {l.durationMin} min{l.meters > 0 && ` · ${formatDistance(l.meters)}`}
+                    {i === 0 && l.to.name ? ` na ${l.to.name}` : i === shown.legs.length - 1 ? ' do cíle' : ' (přestup)'}
+                  </span>
+                </div>
+                {/* navigace pěšky na zastávku / přestup / do cíle – kratší přechody (nástupiště) ne */}
+                {(l.durationMin >= 2 || l.meters >= 150) && (
+                  <div className="mt-1.5 flex flex-wrap gap-2 pl-7">
+                    <NavButtons
+                      from={l.from}
+                      to={l.to}
+                      mode="foot"
+                      small
+                      label={i === 0 ? 'Navigovat na zastávku' : i === shown.legs.length - 1 ? 'Navigovat do cíle' : 'Navigovat na přestup'}
+                    />
+                  </div>
+                )}
               </li>
             )
           ) : (
