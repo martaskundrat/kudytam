@@ -5,9 +5,10 @@ import { Menu } from './components/Menu'
 import { BikeCards, TaxiCard } from './components/Mobility'
 import { RideSheet } from './components/RideSheet'
 import { StationPicker } from './components/StationPicker'
+import { whenLabel, WhenPicker } from './components/WhenPicker'
 import { Button, IconBike, IconBus, IconCar, IconFlag, IconHome, IconMenu, IconPin, IconRefresh, IconSwap, useNow } from './components/ui'
 import { distanceM, getPosition, travelMinutes } from './lib/geo'
-import { MAX_WALK_MIN, mergeJourneys, morePage, planJourneys, type Journey, type JourneyPage } from './lib/journeys'
+import { MAX_WALK_MIN, mergeJourneys, morePage, planJourneys, type Journey, type JourneyPage, type When } from './lib/journeys'
 import { plan, type PlanResult } from './lib/planner'
 import { settingsStore, speedKmh, useStore } from './lib/store'
 import { getProvider, type TransitProvider } from './lib/transit'
@@ -46,7 +47,11 @@ export default function App() {
   // rozpracovaná trasa – vyhledá se až po stisknutí „Vyhledat spoje“
   const [draftOrigin, setDraftOrigin] = useState<Place | null>(settings.origin)
   const [draftDest, setDraftDest] = useState<Place | null>(settings.destination)
-  const dirty = !samePlace(draftOrigin, settings.origin) || !samePlace(draftDest, settings.destination)
+  // kdy jet – null = teď; vyhledá se až po stisknutí „Vyhledat spoje“
+  const [draftWhen, setDraftWhen] = useState<When | null>(null)
+  const [when, setWhen] = useState<When | null>(null)
+  const sameWhen = (a: When | null, b: When | null) => a === b || (!!a && !!b && a.at === b.at && a.arriveBy === b.arriveBy)
+  const dirty = !samePlace(draftOrigin, settings.origin) || !samePlace(draftDest, settings.destination) || !sameWhen(draftWhen, when)
 
   const kmh = speedKmh(settings)
   const dest = settings.destination
@@ -70,7 +75,7 @@ export default function App() {
       if (dest) {
         originRef.current = origin
         setRouteOrigin(origin)
-        const fresh = await planJourneys(origin, dest, settings, kmh)
+        const fresh = await planJourneys(origin, dest, settings, kmh, when)
         if (id === reqId.current) setPage((old) => refreshPage(old, fresh))
       } else {
         const r = await plan(provider!, origin, null, settings, kmh)
@@ -83,7 +88,7 @@ export default function App() {
       if (id === reqId.current) setLoading(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider, kmh, settings.origin, dest, settings.nearRadius, settings.wideRadius, settings.thresholdMin, settings.extendedSearch])
+  }, [provider, kmh, settings.origin, dest, settings.nearRadius, settings.wideRadius, settings.thresholdMin, settings.extendedSearch, when])
 
   useEffect(() => {
     load()
@@ -99,8 +104,13 @@ export default function App() {
   const search = () => {
     setResult(null)
     setPage(null)
-    if (dirty) settingsStore.set({ origin: draftOrigin, destination: draftDest })
-    else load()
+    // zvolený čas, který mezitím uplynul, už neplatí – hledej od teď
+    const w = draftWhen && draftWhen.at < Date.now() - 60000 ? null : draftWhen
+    if (!sameWhen(w, draftWhen)) setDraftWhen(w)
+    const placesChanged = !samePlace(draftOrigin, settings.origin) || !samePlace(draftDest, settings.destination)
+    if (!sameWhen(w, when)) setWhen(w)
+    if (placesChanged) settingsStore.set({ origin: draftOrigin, destination: draftDest })
+    else if (sameWhen(w, when)) load()
   }
 
   /** Nejlepší spojení domů z aktuální polohy. Bez nastaveného domova otevře menu. */
@@ -109,7 +119,10 @@ export default function App() {
     if (!home) return setMenuOpen(true)
     setDraftOrigin(null)
     setDraftDest(home)
-    if (!settings.origin && samePlace(settings.destination, home)) return load()
+    setDraftWhen(null)
+    setWhen(null)
+    // změna času sama spustí nové hledání (load závisí na `when`)
+    if (!settings.origin && samePlace(settings.destination, home)) return when ? undefined : load()
     setPage(null)
     setResult(null)
     settingsStore.set({ origin: null, destination: home })
@@ -227,6 +240,8 @@ export default function App() {
           </button>
         </div>
 
+        {draftDest && <WhenPicker value={draftWhen} onChange={setDraftWhen} />}
+
         <div className="mt-3 flex gap-2">
   <Button onClick={search} disabled={loading && !dirty} className="flex-1 py-3">
           {loading && !dirty ? 'Hledám…' : draftDest ? 'Vyhledat spoje' : dirty ? 'Zobrazit odjezdy' : 'Aktualizovat odjezdy'}
@@ -277,7 +292,10 @@ export default function App() {
         {showJourneys && (
           <>
             <div className="flex items-center justify-between gap-2 pt-1">
-              <h1 className="min-w-0 truncate text-xl font-extrabold">Spojení do: {dest.name}</h1>
+              <h1 className="min-w-0 truncate text-xl font-extrabold">
+                Spojení do: {dest.name}
+                {when && <span className="block text-sm font-semibold text-brand">{whenLabel(when)}</span>}
+              </h1>
               <button onClick={clearDestination} className="shrink-0 text-sm font-semibold text-muted hover:text-white">
                 Odjezdy v okolí
               </button>
@@ -305,7 +323,7 @@ export default function App() {
             )}
 
             {walkOption && routeOrigin && (
-              <WalkCard walk={walkOption} from={routeOrigin} to={dest} now={now} journeys={journeys} mode={settings.travelModeId} />
+              <WalkCard walk={walkOption} from={routeOrigin} to={dest} now={now} journeys={journeys} mode={settings.travelModeId} when={when} />
             )}
 
             {journeys
@@ -317,8 +335,8 @@ export default function App() {
 
             {extended && routeOrigin && (
               <>
-                <BikeCards from={routeOrigin} to={dest} walkKmh={Math.min(kmh, 6.5)} settings={settings} now={now} journeys={journeys} />
-                {page?.car && <TaxiCard car={page.car} from={originRef.current ?? routeOrigin} to={dest} now={now} journeys={journeys} />}
+                <BikeCards from={routeOrigin} to={dest} walkKmh={Math.min(kmh, 6.5)} settings={settings} now={now} journeys={journeys} when={when} />
+                {page?.car && <TaxiCard car={page.car} from={originRef.current ?? routeOrigin} to={dest} now={now} journeys={journeys} when={when} />}
               </>
             )}
 

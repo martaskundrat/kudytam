@@ -305,12 +305,12 @@ export function fareOptions(j: Journey, settings: Settings, quotes?: Quotes): Fa
   j.legs.forEach((l, i) => {
     if (l.kind !== 'walk' || !l.bike) return
     const b = l.bike
-    const late = i > 0 && l.bikeLater
+    const late = l.bikeLater
     bikeParts.push({
       title: `Sdílené kolo ${b.brand} ${b.area}${i > 0 ? ' (do cíle)' : ''}`,
       covers: `${b.from.name} → ${b.to.name} · ~${b.rideMin} min`,
       price: b.price,
-      note: [b.freeNote, late ? 'Kolo si půjčíš až po příjezdu – počet kol je z teď, může se změnit.' : ''].filter(Boolean).join(' ') || undefined,
+      note: [b.freeNote, late ? `Kolo si půjčíš až ${i > 0 ? 'po příjezdu' : 'při odjezdu'} – počet kol je z teď, může se změnit.` : ''].filter(Boolean).join(' ') || undefined,
       buy: [{ label: `Půjčit v aplikaci ${b.brand}`, href: b.open.href, hint: b.open.hint, primary: true }],
     })
   })

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { formatDistance } from '../lib/geo'
-import type { Journey } from '../lib/journeys'
+import { leaveAt, type Journey, type When } from '../lib/journeys'
+import { fmtWhen } from './Journeys'
 import { bikeOptions, TAXI_PICKUP_MIN, taxiOption, type BikeOption } from '../lib/mobility'
 import type { LatLon, Settings } from '../types'
 import { fmtKc, fmtTime, IconBike, IconCar, IconSparkle } from './ui'
@@ -37,6 +38,7 @@ export function BikeCards({
   settings,
   now,
   journeys,
+  when,
 }: {
   from: LatLon
   to: LatLon
@@ -44,6 +46,7 @@ export function BikeCards({
   settings: Settings
   now: number
   journeys: Journey[]
+  when?: When | null
 }) {
   const [opts, setOpts] = useState<BikeOption[] | null>(null)
   const radius = settings.wideRadius
@@ -66,7 +69,9 @@ export function BikeCards({
   return (
     <>
       {opts.map((o) => {
-        const arrival = now + o.totalMin * 60000
+        const leave = leaveAt(when, now, o.totalMin)
+        const arrival = leave + o.totalMin * 60000
+        const later = leave - now > 20 * 60000
         const faster = arrival < bestTransitEnd(journeys, now)
         return (
           <div key={o.systemId} className={`rounded-2xl p-4 ${faster ? 'bg-gradient-to-br from-brand/25 to-surface ring-1 ring-brand' : 'bg-surface'}`}>
@@ -82,7 +87,7 @@ export function BikeCards({
               <div className="shrink-0 font-bold text-muted">~{o.totalMin} min</div>
             </div>
             <p className="mt-1 text-sm">
-              V cíli kolem <b>{fmtTime(arrival)}</b>
+              {later && <>Vyraž v <b>{fmtWhen(leave)}</b>, </>}V cíli kolem <b>{fmtTime(arrival)}</b>
               <Compare arrival={arrival} journeys={journeys} now={now} />
             </p>
             <ol className="mt-2 space-y-0.5 text-sm text-muted">
@@ -114,7 +119,8 @@ export function BikeCards({
               </a>
             </div>
             <p className="mt-1 text-[11px] text-subtle">
-              {o.open.hint} Volná kola podle živých dat {o.brand}, čas jízdy je odhad.
+              {o.open.hint} Volná kola podle živých dat {o.brand}
+              {later ? ' – ověřená teď, do odjezdu se počet může změnit' : ''}, čas jízdy je odhad.
             </p>
           </div>
         )
@@ -130,14 +136,16 @@ export function TaxiCard({
   to,
   now,
   journeys,
+  when,
 }: {
   car: { durationMin: number; meters: number }
+  when?: When | null
   from: LatLon & { name?: string }
   to: LatLon & { name: string }
   now: number
   journeys: Journey[]
 }) {
-  const t = taxiOption(car, from, to, now)
+  const t = taxiOption(car, from, to, leaveAt(when, now, car.durationMin + TAXI_PICKUP_MIN))
   if (!t) return null
   const copyDest = () => navigator.clipboard?.writeText(to.name).catch(() => {})
   return (
@@ -154,7 +162,11 @@ export function TaxiCard({
         V cíli kolem <b>{fmtTime(t.arrival)}</b>
         <Compare arrival={t.arrival} journeys={journeys} now={now} />
       </p>
-      <p className="text-xs text-subtle">Počítáme s ~{TAXI_PICKUP_MIN} min, než auto přijede.</p>
+      <p className="text-xs text-subtle">
+        {t.arrival - (TAXI_PICKUP_MIN + t.durationMin) * 60000 - now > 60000
+          ? `Objednej na ${fmtWhen(t.arrival - (TAXI_PICKUP_MIN + t.durationMin) * 60000)} (v aplikaci jde jízda naplánovat předem).`
+          : `Počítáme s ~${TAXI_PICKUP_MIN} min, než auto přijede.`}
+      </p>
       <div className="mt-2 flex items-baseline justify-between gap-3">
         <span className="text-xs text-subtle">Orientační cena – přesnou ukáže aplikace před objednáním</span>
         <span className="shrink-0 text-xl font-black text-brand">

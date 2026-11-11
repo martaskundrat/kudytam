@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type TouchEvent } from 'react'
 import { formatDistance } from '../lib/geo'
-import { fetchTrip, firstWalk, shiftLeg, transitLegs, tripPosition, type Journey, type TransitLeg, type TripDetail, type WalkLeg } from '../lib/journeys'
+import { fetchTrip, firstWalk, leaveAt, shiftLeg, transitLegs, tripPosition, type Journey, type TransitLeg, type TripDetail, type WalkLeg, type When } from '../lib/journeys'
 import { settingsStore, speedKmh, useStore } from '../lib/store'
 import { carrierQuote, legKey, quotable } from '../lib/carriers'
 import { fareOptions, type Quotes } from '../lib/fares'
@@ -54,9 +54,15 @@ function useQuotes(j: Journey | null, category: PassengerCategory): Quotes | und
   return quotes?.key === key ? quotes.q : undefined
 }
 
+/** čas, u jiného dne i s datem („st 12. 11. 7:30“) */
+export const fmtWhen = (t: number) =>
+  new Date(t).toDateString() === new Date().toDateString()
+    ? fmtTime(t)
+    : `${new Date(t).toLocaleDateString('cs-CZ', { weekday: 'short', day: 'numeric', month: 'numeric' })} ${fmtTime(t)}`
+
 const leaveLabel = (j: Journey, now: number) => {
   const m = Math.floor((j.start - now) / 60000)
-  return m <= 0 ? 'Vyraž hned' : m < 60 ? `Vyraž za ${m} min` : `Vyraž v ${fmtTime(j.start)}`
+  return m <= 0 ? 'Vyraž hned' : m < 60 ? `Vyraž za ${m} min` : `Vyraž v ${fmtWhen(j.start)}`
 }
 
 function LegChips({ j }: { j: Journey }) {
@@ -346,7 +352,8 @@ function BikeLegRow({ bike, stop, atEnd, later }: { bike: BikeOption; stop: stri
       {bike.freeNote && <p className="mt-1 text-xs text-brand">{bike.freeNote}</p>}
       {later && (
         <p className="mt-1 text-xs text-amber-300">
-          Kolo si půjčíš až po příjezdu. Počet kol je ověřený teď, do té doby se může změnit – zkontroluj ho v aplikaci, než vystoupíš.
+          Kolo si půjčíš až {atEnd ? 'po příjezdu' : 'při odjezdu'}. Počet kol je ověřený teď, do té doby se může změnit – zkontroluj ho v aplikaci,{' '}
+          {atEnd ? 'než vystoupíš' : 'než vyrazíš'}.
         </p>
       )}
       <div className="mt-2 flex flex-wrap gap-2">
@@ -609,8 +616,10 @@ export function WalkCard({
   now,
   journeys,
   mode = 'walk',
+  when,
 }: {
   walk: { durationMin: number; meters: number; estimated?: boolean }
+  when?: When | null
   /** id způsobu přesunu z menu (chůze, běh, koloběžka, kolo…) */
   mode?: string
   from: { lat: number; lon: number }
@@ -619,7 +628,8 @@ export function WalkCard({
   journeys: Journey[]
 }) {
   const label = MODE_LABEL[mode] ?? 'Pěšky'
-  const arrival = now + walk.durationMin * 60000
+  const leave = leaveAt(when, now, walk.durationMin)
+  const arrival = leave + walk.durationMin * 60000
   const live = journeys.filter((j) => j.start >= now - 30000)
   const bestTransit = live.reduce<Journey | null>((a, b) => (!a || b.end < a.end ? b : a), null)
   const diff = bestTransit ? Math.round((bestTransit.end - arrival) / 60000) : null
@@ -653,7 +663,7 @@ export function WalkCard({
         </div>
       </div>
       <p className="mt-1 text-sm">
-        Vyraž hned a v cíli budeš v <b>{fmtTime(arrival)}</b>
+        {leave - now < 60000 ? 'Vyraž hned' : <>Vyraž v <b>{fmtWhen(leave)}</b></>} a v cíli budeš v <b>{fmtTime(arrival)}</b>
         {diff !== null && diff !== 0 && (
           <span className="text-muted"> · {diff > 0 ? `o ${diff} min dřív` : `o ${-diff} min později`} než nejrychlejší MHD</span>
         )}

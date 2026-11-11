@@ -94,6 +94,14 @@ RegioJet odmítá dotazy z prohlížeče cizích webů, proto ceny jdou přes ed
 Dálkové spoje, které jen projíždějí pásmy PID (rychlík do Brna), a komerční dopravci (FlixBus, RegioJet, Leo Express)
 se nepočítají jako PID – jízdenka PID na ně neplatí.
 
+## Kdy jet: teď, odjezd v / příjezd do
+
+Pod kolonkami Odkud/Kam (když je zadaný cíl) jde přepnout **Teď / Odjezd / Příjezd** a vybrat datum a čas.
+Posílá se Transitous jako `time` (+ `arriveBy=true`) a platí pro spojení MHD, spojení s kolem i dřívější/pozdější stránky.
+Cesta pěšky, sdíleným kolem a taxi se počítá od zvoleného odjezdu, nebo tak, abys byl v cíli do zvoleného příjezdu
+(`leaveAt` v `journeys.ts`). Volná kola u cesty víc než 20 min dopředu jsou jen ověřená teď – aplikace na to upozorní.
+Uplynulý čas se při hledání vrátí na „Teď“. Odjezdy v okolí (bez cíle) jsou vždy aktuální.
+
 ## Cíl: stanice, adresa nebo GPS
 
 V kolonce **Kam** (a u domova) jde zadat stanici PID, adresu (Transitous /geocode nad OpenStreetMap) nebo GPS souřadnice:
@@ -135,6 +143,7 @@ Volba se pamatuje.
   - začátek: kolo na stojanu u startu, místo k vrácení do 350 m od nástupní zastávky,
   - konec: kolo na stojanu do 350 m od výstupní zastávky, místo k vrácení u cíle. Kolo potřebuješ až po příjezdu,
     takže počet kol je jen ověřený teď – aplikace na to upozorní (víc než 20 min dopředu).
+  Když je na začátku nebo na konci rychlejší jít rovnou pěšky (zajížďka ke stojanům zabere víc), ukáže se ten úsek pěšky.
   Spojení, kde ověření kola selže, se zahodí; spojení s kolem zůstane jen tam, kde žádné běžné spojení nevyráží stejně
   pozdě a nedorazí stejně brzy. Stojany bez uvedené kapacity (parkovací místa bez zámků, např. v Brně) berou kolo vždy.
   Cena kola se přičte k jízdnému.

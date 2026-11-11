@@ -6,6 +6,7 @@
  * „širšího okolí“, takže vyhledávač sám zváží, jestli se vyplatí dojít dál na rychlejší spoj.
  */
 import type { LatLon, Place, Settings, VehicleType } from '../types'
+import { distanceM, travelMinutes } from './geo'
 import { bikeAreaAt, bikeFromStop, bikesNear, bikeToStop, type BikeOption } from './mobility'
 import { platformZones, zonesNear } from './stations'
 
@@ -250,7 +251,29 @@ function baseParams(from: string, dest: Place, kmh: number, maxPre: number) {
 /** nejdelší jízda autem, kterou počítáme při rozšířeném vyhledávání (taxi) */
 const MAX_CAR_S = 2 * 3600
 
-export async function planJourneys(origin: LatLon & { name?: string }, dest: Place, settings: Settings, kmh: number): Promise<JourneyPage> {
+/** Kdy jet: odjezd v / příjezd do zvoleného času. Bez něj = odjezd teď. */
+export interface When {
+  at: number
+  arriveBy: boolean
+}
+
+/**
+ * Kdy vyrazit na přímou cestu (pěšky, kolo, taxi) trvající `durMin`: teď, ve zvolený čas odjezdu,
+ * nebo tak, abys byl v cíli do zvoleného času příjezdu (ne dřív než teď).
+ */
+export const leaveAt = (when: When | null | undefined, now: number, durMin: number) =>
+  !when ? now : when.arriveBy ? Math.max(now, when.at - durMin * 60000) : Math.max(now, when.at)
+
+const whenParams = (when?: When | null): Record<string, string> =>
+  when ? { time: new Date(when.at).toISOString(), ...(when.arriveBy ? { arriveBy: 'true' } : {}) } : {}
+
+export async function planJourneys(
+  origin: LatLon & { name?: string },
+  dest: Place,
+  settings: Settings,
+  kmh: number,
+  when?: When | null,
+): Promise<JourneyPage> {
   const speed = kmh / 3.6 // m/s
   const extended = settings.extendedSearch !== false
   // první úsek pěšky smí vést až na zastávky v „širším okolí“ (cesta po ulicích ~1,3× delší)
@@ -260,6 +283,7 @@ export async function planJourneys(origin: LatLon & { name?: string }, dest: Pla
     ...baseParams(`${origin.lat},${origin.lon}`, dest, kmh, maxPre),
     // i cesta pěšky (do 45 min) – jestli ji nabídnout, rozhoduje aplikace podle vzdálenosti a srovnání s MHD;
     // při rozšířeném vyhledávání i autem (taxi)
+    ...whenParams(when),
     directModes: extended ? 'WALK,CAR' : 'WALK',
     maxDirectTime: String(extended ? MAX_CAR_S : walkTime),
     // bez toho by Transitous zahodil spojení MHD, která jsou pomalejší než jízda autem
@@ -269,7 +293,7 @@ export async function planJourneys(origin: LatLon & { name?: string }, dest: Pla
     maxItineraries: '10',
   }).toString()
   // s rozšířeným vyhledáváním zároveň spojení se sdíleným kolem na začátek cesty
-  const bikeFirst = extended ? bikeJourneys(origin, dest, kmh, maxPre, settings).catch(() => []) : Promise.resolve([])
+  const bikeFirst = extended ? bikeJourneys(origin, dest, kmh, maxPre, settings, when).catch(() => []) : Promise.resolve([])
   const data = await fetchPlan(query)
   const directOf = (mode: string): DirectWalk | undefined => {
     const it = (data.direct ?? []).find((it: any) => (it.legs ?? []).length > 0 && it.legs.every((l: any) => l.mode === mode))
@@ -308,11 +332,19 @@ const BIKE_SURE_MS = 20 * 60000
  *   takže dostupnost ověřená teď je jen pravděpodobná (`bikeLater`).
  * Spojení, kde ověření kola selže, se zahodí – pěší verzi najde běžné hledání.
  */
-async function bikeJourneys(origin: LatLon & { name?: string }, dest: Place, kmh: number, maxPre: number, settings: Settings): Promise<Journey[]> {
+async function bikeJourneys(
+  origin: LatLon & { name?: string },
+  dest: Place,
+  kmh: number,
+  maxPre: number,
+  settings: Settings,
+  when?: When | null,
+): Promise<Journey[]> {
   const [atStart, atEnd] = await Promise.all([bikesNear(origin), bikeAreaAt(dest)])
   if (!atStart && !atEnd) return []
   const query = new URLSearchParams({
     ...baseParams(`${origin.lat},${origin.lon}`, dest, kmh, maxPre),
+    ...whenParams(when),
     preTransitModes: atStart ? 'WALK,BIKE' : 'WALK',
     postTransitModes: atEnd ? 'WALK,BIKE' : 'WALK',
     maxPreTransitTime: String(Math.max(maxPre, MAX_BIKE_S)),
@@ -336,16 +368,34 @@ async function bikeJourneys(origin: LatLon & { name?: string }, dest: Place, kmh
     if (first?.kind === 'walk' && first.viaBike) {
       const bike = await bikeToStop(origin, first.to, walkKmh, rider)
       if (!bike) continue // bez kola u startu nemá spojení smysl – pěší verzi najde běžné hledání
-      start = firstRide.from.time - BIKE_SLACK_MS - bike.totalMin * 60000
-      if (start < Date.now() - 30000) continue // na tenhle spoj už kolem nestihneš
-      legs[0] = { ...first, durationMin: bike.totalMin, meters: bike.from.walkM + bike.rideM + bike.to.walkM, bike }
+      const walk = walkInstead(origin, first.to, walkKmh)
+      if (walk.durationMin <= bike.totalMin + BIKE_SLACK_MS / 60000) {
+        // ke stojanům a zpět je to delší než dojít rovnou pěšky
+        start = firstRide.from.time - walk.durationMin * 60000
+        legs[0] = { ...first, ...walk, viaBike: false }
+      } else {
+        start = firstRide.from.time - BIKE_SLACK_MS - bike.totalMin * 60000
+        legs[0] = {
+          ...first,
+          durationMin: bike.totalMin,
+          meters: bike.from.walkM + bike.rideM + bike.to.walkM,
+          bike,
+          bikeLater: start - Date.now() > BIKE_SURE_MS,
+        }
+      }
+      if (start < Date.now() - 30000) continue // na tenhle spoj už nestihneš
     }
 
     const li = legs.length - 1
     const last = legs[li]
     if (last?.kind === 'walk' && last.viaBike && li > 0) {
       const bike = await bikeFromStop(last.from, dest, walkKmh, rider)
-      if (bike) {
+      const walk = walkInstead(last.from, dest, walkKmh)
+      if (bike && walk.durationMin <= bike.totalMin) {
+        // ze zastávky je to pěšky rychlejší než přes stojany kol
+        end = lastRide.to.time + walk.durationMin * 60000
+        legs[li] = { ...last, ...walk, viaBike: false }
+      } else if (bike) {
         end = lastRide.to.time + bike.totalMin * 60000
         legs[li] = {
           ...last,
@@ -357,6 +407,7 @@ async function bikeJourneys(origin: LatLon & { name?: string }, dest: Place, kmh
       } else continue // u výstupní zastávky není kolo – pěší verzi najde běžné hledání
     }
 
+    // bez žádného úseku na kole je to jen běžné spojení – to najde běžné hledání
     if (!legs.some((l) => l.kind === 'walk' && l.bike)) continue
     legs = legs.map((l) => (l.kind === 'walk' ? { ...l, viaBike: undefined } : l))
     const bj: Journey = { ...j, legs, start, end, durationMin: Math.round((end - start) / 60000) }
@@ -364,6 +415,12 @@ async function bikeJourneys(origin: LatLon & { name?: string }, dest: Place, kmh
     out.push(bj)
   }
   return out
+}
+
+/** chůze místo kola: odhad podle vzdálenosti (po ulicích ~1,3× vzdušné čáry) */
+function walkInstead(a: LatLon, b: LatLon, walkKmh: number) {
+  const air = distanceM(a, b)
+  return { durationMin: Math.max(1, Math.round(travelMinutes(air, walkKmh))), meters: Math.round(air * 1.3) }
 }
 
 /**
