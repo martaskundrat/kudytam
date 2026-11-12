@@ -30,6 +30,7 @@ export const IconTrash = svg(<path d="M4 7h16M10 11v6M14 11v6M5 7l1 13h12l1-13M9
 export const IconCheck = svg(<path d="m5 12 5 5L20 7" />)
 export const IconAccessible = svg(<><circle cx="12" cy="4" r="2" /><path d="M12 7v7h5l2 5M8 10a6 6 0 1 0 7 8" /></>)
 export const IconSnow = svg(<path d="M12 2v20M4 6l16 12M20 6 4 18" />)
+export const IconBell = svg(<><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4l2-2Z" /><path d="M10 21h4" /></>)
 export const IconBike = svg(<><circle cx="6" cy="16" r="3.5" /><circle cx="18" cy="16" r="3.5" /><path d="M6 16 10 8h5l3 8M10 8 8.5 5H7M12 16l3-8" /></>)
 export const IconCar = svg(<><path d="M5 17H3v-5l2-5h14l2 5v5h-2" /><path d="M3 12h18" /><circle cx="7.5" cy="17" r="2" /><circle cx="16.5" cy="17" r="2" /><path d="M9.5 17h5" /></>)
 export const IconBus =svg(<><rect x="5" y="3" width="14" height="15" rx="3" /><path d="M5 11h14M8 21v-3M16 21v-3" /><circle cx="8.5" cy="14.5" r=".8" /><circle cx="15.5" cy="14.5" r=".8" /></>)

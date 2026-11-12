@@ -240,6 +240,17 @@ Volba se pamatuje.
 
 V menu si nastavíš domov – konkrétní adresu (vyhledávání Transitous /geocode nad OpenStreetMap) nebo stanici. Tlačítko **Domů** pak vyhledá nejlepší spojení domů z aktuální polohy.
 
+## Upozornění na výstup
+
+U každého úseku v detailu spojení jde zapnout **Upozornit na výstup** (`src/lib/alight.ts`). Notifikace „Na další zastávce
+vystupte“ přijde v autobusu, tramvaji, metru apod. **30 s** před příjezdem, ve vlaku **5 min** předem. Když je jízda
+z předchozí zastávky kratší, přijde hned po odjezdu z ní.
+- Zpoždění: časy průjezdů se obnovují z Transitous `/trip` (blízko výstupu každých 30 s).
+- Poloha: spoj ještě stojí v předchozí zastávce → počká; je už za ní → zbývající čas podle rychlosti nebo ujeté části úseku.
+  Poloha může upozornění oddálit nejvýš o 10 min. Bez GPS (metro) platí čas.
+- Notifikace jsou lokální (service worker, `public/notify-sw.js` otevře aplikaci po klepnutí) – Kudytam musí běžet
+  aspoň na pozadí. Na iPhonu jen jako aplikace přidaná na plochu (iOS 16.4+).
+
 ## Trasa spoje
 
 Klepnutí na úsek v detailu spojení načte přes Transitous `/trip` všechny zastávky spoje s aktuálními časy.

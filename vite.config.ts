@@ -83,6 +83,8 @@ export default defineConfig(({ mode }) => {
         workbox: {
           // stops.json se ukládá do cache za běhu, ne při instalaci
           globIgnores: ['**/stops.json'],
+          // upozornění na výstup: klepnutí na notifikaci otevře aplikaci
+          importScripts: ['notify-sw.js'],
           navigateFallbackDenylist: [/^\/api\//],
           runtimeCaching: [
             {

@@ -563,6 +563,8 @@ export interface TripStop {
   track?: string
   cancelled: boolean
   tz?: string
+  lat?: number
+  lon?: number
 }
 
 export interface TripDetail {
@@ -593,6 +595,8 @@ export async function fetchTrip(tripId: string): Promise<TripDetail> {
         track: p.track ?? p.scheduledTrack ?? undefined,
         cancelled: !!p.cancelled,
         tz: p.tz ?? undefined,
+        lat: typeof p.lat === 'number' ? p.lat : undefined,
+        lon: typeof p.lon === 'number' ? p.lon : undefined,
       }
       // navazující úseky (stay-seated) sdílejí zastávku
       if (prev && prev.name === stop.name) Object.assign(prev, { dep: stop.dep ?? prev.dep, schedDep: stop.schedDep ?? prev.schedDep })

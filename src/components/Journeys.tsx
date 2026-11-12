@@ -10,9 +10,10 @@ import { FareComparison } from './FareComparison'
 import type { BikeOption } from '../lib/mobility'
 import { fmtWhen } from '../lib/time'
 import { NavButtons } from './NavButtons'
+import { alertId, alightStore, disableAlert, enableAlert } from '../lib/alight'
 import { recommend, type JourneyPick } from '../lib/recommend'
 export { recommend, type JourneyPick }
-import { fmtKc, fmtTime, platformLabel, IconBike, IconSparkle, IconWalk, LineBadge, Sheet, useNow, VEHICLE_LABEL } from './ui'
+import { fmtKc, fmtTime, platformLabel, IconBell, IconBike, IconSparkle, IconWalk, LineBadge, Sheet, useNow, VEHICLE_LABEL } from './ui'
 
 /**
  * Živé ceny dopravců (FlixBus, RegioJet) pro úseky spojení. Dotazy se sdílejí v cache
@@ -498,6 +499,7 @@ function LegCard({
         {l.cancelled && <p className="mt-2 text-sm font-semibold text-red-400">Spoj je zrušen.</p>}
         {busy && <p className="mt-2 text-xs text-muted">Hledám jiný spoj…</p>}
         {note && <p className="mt-2 text-xs text-amber-300">{note}</p>}
+        <AlightToggle leg={l} />
         {l.tripId && (
           <p className="mt-2 text-xs font-semibold text-muted">{showStops ? 'Skrýt zastávky ▴' : 'Všechny zastávky a poloha spoje ▾'}</p>
         )}
@@ -680,6 +682,45 @@ export function WalkCard({
       <div className="mt-3 flex flex-wrap gap-2">
         <NavButtons from={from} to={to} mode={mode === 'bike' || mode === 'scooter' ? 'bike' : 'foot'} label={`Navigovat (${label.toLowerCase()})`} primary />
       </div>
+    </div>
+  )
+}
+
+/** Přepínač upozornění na výstup u úseku (notifikace s předstihem, korigovaná zpožděním a polohou). */
+function AlightToggle({ leg: l }: { leg: TransitLeg }) {
+  const { alerts } = useStore(alightStore)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const now = useNow(15000)
+  const alert = alerts.find((a) => a.id === alertId(l))
+  if (l.cancelled || (!alert && l.to.time < now)) return null
+  const lead = l.vehicle === 'train' ? '5 min' : '30 s'
+  const toggle = async () => {
+    setError(null)
+    if (alert) return disableAlert(alert.id)
+    setBusy(true)
+    setError(await enableAlert(l))
+    setBusy(false)
+  }
+  return (
+    <div className="mt-2">
+      <button
+        onClick={toggle}
+        disabled={busy}
+        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition active:scale-95 ${
+          alert ? 'bg-brand text-black' : 'bg-highlight text-muted hover:text-white'
+        }`}
+      >
+        <IconBell className="size-4" />
+        {alert ? (alert.fired ? 'Upozornění odesláno · zrušit' : 'Upozornění na výstup zapnuto') : 'Upozornit na výstup'}
+      </button>
+      {alert && !alert.fired && (
+        <p className="mt-1 text-xs text-muted">
+          Ozvu se asi v {fmtTime(alert.fireAt, alert.tz)} – {lead} před příjezdem do {alert.toName} (nebo hned po odjezdu z předchozí zastávky),
+          podle aktuálního zpoždění a polohy. Nech Kudytam otevřený na pozadí.
+        </p>
+      )}
+      {error && <p className="mt-1 text-xs text-amber-300">{error}</p>}
     </div>
   )
 }

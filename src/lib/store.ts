@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react'
 import type { Settings } from '../types'
 
 /** Malý perzistentní store nad localStorage (bez externí knihovny). */
-function createStore<T>(key: string, initial: T) {
+export function createStore<T>(key: string, initial: T) {
   let state: T = initial
   try {
     const raw = localStorage.getItem(key)
